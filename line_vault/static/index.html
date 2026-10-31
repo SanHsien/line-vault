@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE Vault - 本地對話與防過期媒體中心</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-box">
+        <span class="logo-icon">🛡️</span>
+      </div>
+      <div class="title-box">
+        <h1>LINE Vault <span class="badge-beta">PRO</span></h1>
+        <p class="subtitle">Windows 11 本地對話與防過期媒體管理中心</p>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="global-search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="globalSearchInput" placeholder="搜尋所有對話紀錄、相片、影片與文件檔案..." />
+        <button id="globalSearchClear" class="clear-btn" title="清除搜尋" style="display:none;">✕</button>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="kpi-group">
+        <div class="kpi-card" title="目前設定為自動防過期備份的聊天室數量">
+          <span class="kpi-label">監控聊天室</span>
+          <span class="kpi-val" id="kpiMonitoredChats">0</span>
+        </div>
+        <div class="kpi-card" title="已成功解密並永久保存至本地金庫的媒體總數">
+          <span class="kpi-label">永久保存媒體</span>
+          <span class="kpi-val" id="kpiArchivedMedia">0</span>
+        </div>
+        <div class="kpi-card" title="由 AI 自動萃取的待辦與關鍵事項">
+          <span class="kpi-label">待辦追蹤</span>
+          <span class="kpi-val" id="kpiActionItems">0</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnScanLine" class="btn btn-outline" title="掃描本機 Windows LINE 資料夾並將快取媒體永久歸檔">
+          <span class="btn-icon">🔄</span> 掃描本機 LINE
+        </button>
+        <button id="btnAnalyzeAll" class="btn btn-primary" title="重新分析所有已監控聊天室">
+          <span class="btn-icon">⚡</span> 重新分析全部
+        </button>
+        <button id="btnSeedDemo" class="btn btn-secondary" title="載入真實範例對話、相片、影片與合約檔案">
+          <span class="btn-icon">✨</span> 載入範例資料
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main 3-Column Workspace -->
+  <main class="main-layout">
+    <!-- Left Pane: Chat List -->
+    <aside class="pane pane-left">
+      <div class="pane-header">
+        <div class="pane-title-row">
+          <h2>聊天室清單</h2>
+          <span class="chat-count-badge" id="chatCountBadge">0</span>
+        </div>
+        <div class="chat-filters">
+          <button class="filter-tab active" data-filter="all">全部</button>
+          <button class="filter-tab" data-filter="monitored">監控中</button>
+          <button class="filter-tab" data-filter="group">群組</button>
+          <button class="filter-tab" data-filter="direct">個人</button>
+        </div>
+        <div class="chat-search-wrap">
+          <input type="text" id="chatSearchInput" placeholder="過濾聊天室名稱..." />
+        </div>
+      </div>
+
+      <div class="chat-list" id="chatListContainer">
+        <!-- Rendered by app.js -->
+        <div class="loading-state">載入中...</div>
+      </div>
+    </aside>
+
+    <!-- Center Pane: Message Feed & Media Vault -->
+    <section class="pane pane-center">
+      <div class="center-header">
+        <div class="active-chat-info">
+          <div class="active-chat-avatar" id="activeChatAvatar">💬</div>
+          <div class="active-chat-details">
+            <h2 id="activeChatTitle">請選擇聊天室</h2>
+            <p id="activeChatSubtitle" class="chat-meta-sub">尚未選擇</p>
+          </div>
+        </div>
+
+        <div class="chat-monitor-toggle-wrap">
+          <label class="toggle-switch-label">
+            <input type="checkbox" id="centerMonitorToggle" disabled>
+            <span class="toggle-slider"></span>
+            <span class="toggle-text">自動監控 & 防過期備份</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="view-tabs">
+        <button class="view-tab active" data-tab="messages">
+          <span class="tab-icon">💬</span> 對話紀錄
+        </button>
+        <button class="view-tab" data-tab="photos">
+          <span class="tab-icon">🖼️</span> 相片牆
+        </button>
+        <button class="view-tab" data-tab="videos">
+          <span class="tab-icon">🎬</span> 影片庫
+        </button>
+        <button class="view-tab" data-tab="files">
+          <span class="tab-icon">📁</span> 檔案櫃
+        </button>
+      </nav>
+
+      <!-- Filter / Date Range Bar -->
+      <div class="filter-bar">
+        <div class="filter-dates">
+          <label>從：<input type="date" id="dateFilterFrom" /></label>
+          <label>至：<input type="date" id="dateFilterTo" /></label>
+          <button id="btnApplyDateFilter" class="btn btn-sm btn-outline">篩選</button>
+          <button id="btnResetFilter" class="btn btn-sm btn-ghost">重設</button>
+        </div>
+        <div class="filter-status-text" id="filterStatusText">顯示中全部訊息</div>
+      </div>
+
+      <!-- Center Dynamic Content Container -->
+      <div class="center-content-scroll" id="centerContent">
+        <div class="empty-state">
+          <div class="empty-icon">📁</div>
+          <h3>尚未選擇聊天室</h3>
+          <p>請從左側點選聊天室以檢視防過期保存之對話紀錄與媒體檔案。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Pane: AI Insights & Smart Suggestions -->
+    <aside class="pane pane-right">
+      <div class="pane-header right-header">
+        <div class="pane-title-row">
+          <h2>AI 智慧分析與行動建議</h2>
+          <span class="urgency-pill normal" id="urgencyBadge">正常</span>
+        </div>
+        <button id="btnRefreshAnalysis" class="btn btn-sm btn-outline" title="即時重新分析此聊天室">
+          🔄 重新分析
+        </button>
+      </div>
+
+      <div class="insight-scroll-wrap" id="insightContainer">
+        <!-- Rendered by app.js -->
+        <div class="empty-state">
+          <div class="empty-icon">🤖</div>
+          <h3>尚無分析資料</h3>
+          <p>選擇左側聊天室並開啟監控，AI 將即時提取對話摘要、重要待辦與建議回覆。</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

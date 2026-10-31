@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "line-vault"
+version = "0.1.0"
+description = "Windows 11 LINE local chat/media management, anti-expiration permanent archiving, FTS5 search, and AI monitoring/suggestions"
+readme = "README.md"
+authors = [
+    { name = "SanHsien" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=42.0.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: System :: Archiving",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+line-vault = "line_vault.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["line_vault*"]
+
+[tool.setuptools.package-data]
+line_vault = ["static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
