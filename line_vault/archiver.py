@@ -19,6 +19,7 @@ from line_vault.crypto import (
     sniff_media_format,
 )
 from line_vault.db import VaultDB
+from line_vault.line_reader import BuiltinLineReader, try_deobfuscate_xor_media
 
 
 def _sanitize_path_part(text: str) -> str:
@@ -221,7 +222,8 @@ class MediaArchiver:
                 if size == 0 or size > 50 * 1024 * 1024:
                     continue
                 raw = candidate.read_bytes()
-                info = sniff_media_format(raw, fallback_filename=candidate.name)
+                restored = try_deobfuscate_xor_media(raw)
+                info = sniff_media_format(restored, fallback_filename=candidate.name)
                 if info["format"] == "bin":
                     continue
 
@@ -243,7 +245,7 @@ class MediaArchiver:
                 chat_folder = self.media_dir / chat_id
                 chat_folder.mkdir(parents=True, exist_ok=True)
                 dest_file = chat_folder / f"{msg_id}{ext}"
-                dest_file.write_bytes(raw)
+                dest_file.write_bytes(restored)
 
                 self.db.upsert_message(
                     message_id=msg_id,
@@ -319,13 +321,17 @@ class MediaArchiver:
             )
 
         if runner is None:
-            if not resolved_reader.is_file():
-                return {
-                    "status": "reader_not_configured",
-                    "chats_synced": 0,
-                    "messages_synced": 0,
-                    "media_archived": 0,
-                }
+            env_reader = os.environ.get("LINE_VAULT_READER_SCRIPT")
+            explicit_reader = reader_script or env_reader
+            if not explicit_reader or not Path(explicit_reader).resolve().is_file() or getattr(sys, "frozen", False):
+                # Always use the built-in native Windows LINE Reader Engine by default
+                native_reader = BuiltinLineReader(line_root=resolved_cache_root)
+                return native_reader.run_native_sync(
+                    self,
+                    chat_name=chat_name,
+                    days=days,
+                    analyzer=analyzer,
+                )
 
             def default_runner(action: str, extra_args: list[str]) -> dict:
                 cmd = [python_exe, str(resolved_reader), action, *extra_args]
@@ -761,13 +767,17 @@ class MediaArchiver:
         chat_id: str | None = None,
         analyzer=None,
     ) -> dict:
-        """Parse LINE desktop/mobile exported chat text and import into vault database."""
-        lines = text_content.strip().splitlines()
-        detected_name = chat_name.strip()
+        """Parse LINE desktop/mobile exported chat text (or general .txt test files) and import into vault DB."""
+        cleaned_text = text_content.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+        lines = cleaned_text.splitlines()
+        detected_name = (chat_name or "").strip()
         if not detected_name:
-            for line in lines[:5]:
-                m = re.search(r"\[LINE\]\s*(?:Chat history with|與)?\s*([^\r\n]+?)(?:的聊天記錄|的聊天歷史記錄)?$", line)
-                if m:
+            for line in lines[:8]:
+                m = re.search(
+                    r"\[LINE\]\s*(?:Chat history with|與)?\s*([^\r\n]+?)(?:的聊天記錄|的聊天紀錄|的聊天歷史記錄)?$",
+                    line.strip(),
+                )
+                if m and m.group(1).strip():
                     detected_name = m.group(1).strip()
                     break
             if not detected_name:
@@ -778,7 +788,7 @@ class MediaArchiver:
             name_hash = hashlib.sha1(detected_name.encode("utf-8")).hexdigest()[:8]
             chat_id = f"c_imp_{safe_name[:12]}_{name_hash}"
 
-        is_group = any(w in detected_name for w in ["群組", "團隊", "專案", "Group", "Team", "Project"])
+        is_group = any(w in detected_name for w in ["群", "團隊", "專案", "Group", "Team", "Project"])
         self.db.upsert_chat(
             chat_id=chat_id,
             chat_name=detected_name,
@@ -787,134 +797,177 @@ class MediaArchiver:
         )
 
         current_date = datetime.date.today()
-        imported_messages = 0
-
-        date_pattern = re.compile(r"^(\d{4})[/\.-](\d{1,2})[/\.-](\d{1,2})")
-        msg_tab_pattern = re.compile(r"^(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?|(?:上午|下午)\s*\d{1,2}:\d{2})\t([^\t]+)\t(.*)$")
-
         base_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
 
-        for line in lines:
-            line_str = line.strip("\r")
-            if not line_str.strip():
+        # Standalone date header: e.g. "2026/10/31（六）", "2026.10.31 星期六", "2026-10-31"
+        date_only_pattern = re.compile(
+            r"^(\d{4})[/\.\-年](\d{1,2})[/\.\-月](\d{1,2})日?(?:\s*[\(（]?[週周星期A-Za-z一二三四五六日天]+[\)）]?)?\s*$"
+        )
+        # Tab-separated LINE export: "[optional date] HH:MM\tSender\tMessage"
+        msg_tab_pattern = re.compile(
+            r"^(?:(\d{4})[/\.\-](\d{1,2})[/\.\-](\d{1,2})\s+)?"
+            r"(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?|(?:上午|下午|午前|午後)\s*\d{1,2}:\d{2})\t([^\t]+)\t(.*)$"
+        )
+        # Space-separated LINE export: "[optional date] [上午/下午] HH:MM Sender Message"
+        msg_space_pattern = re.compile(
+            r"^(?:(\d{4})[/\.\-](\d{1,2})[/\.\-](\d{1,2})\s+)?"
+            r"((?:(?:上午|下午|午前|午後)\s*)?\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?)\s+(\S+)\s+(.+)$"
+        )
+
+        parsed_records: list[dict] = []
+
+        def _parse_time_to_ms(c_date: datetime.date, t_str: str, seq: int) -> int:
+            hour = 12
+            minute = 0
+            is_pm = any(tok in t_str.upper() for tok in ("下午", "午後", "PM"))
+            is_am = any(tok in t_str.upper() for tok in ("上午", "午前", "AM"))
+            t_clean = re.sub(r"[上午下午午前午後AaPpMm\s]", "", t_str)
+            if ":" in t_clean:
+                parts = t_clean.split(":")
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    hour = int(parts[0])
+                    minute = int(parts[1])
+                    if is_pm and hour < 12:
+                        hour += 12
+                    elif is_am and hour == 12:
+                        hour = 0
+            try:
+                dt = datetime.datetime(
+                    c_date.year,
+                    c_date.month,
+                    c_date.day,
+                    max(0, min(23, hour)),
+                    max(0, min(59, minute)),
+                    tzinfo=datetime.timezone.utc,
+                )
+                return int(dt.timestamp() * 1000) + (seq % 60) * 1000
+            except (ValueError, OverflowError):
+                return base_ts + seq * 1000
+
+        def _classify_body(raw_body: str) -> tuple[str, str]:
+            b_clean = raw_body.strip()
+            if b_clean in ("[照片]", "[Photo]", "[圖片]", "[相片]"):
+                return "image", ""
+            if b_clean in ("[影片]", "[Video]"):
+                return "video", ""
+            if b_clean in ("[語音訊息]", "[Voice message]", "[音訊]"):
+                return "audio", ""
+            if b_clean.startswith("[檔案]") or b_clean.startswith("[File]"):
+                return "file", b_clean.replace("[檔案]", "").replace("[File]", "").strip()
+            return "text", ""
+
+        for raw_line in lines:
+            line_str = raw_line.strip("\r")
+            stripped = line_str.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("[LINE]") or stripped.startswith("儲存日期") or stripped.startswith("Saved on"):
                 continue
 
-            date_m = date_pattern.match(line_str)
+            date_m = date_only_pattern.match(stripped)
             if date_m:
                 try:
-                    y, m, d = int(date_m.group(1)), int(date_m.group(2)), int(date_m.group(3))
-                    current_date = datetime.date(y, m, d)
+                    current_date = datetime.date(
+                        int(date_m.group(1)),
+                        int(date_m.group(2)),
+                        int(date_m.group(3)),
+                    )
                 except ValueError:
                     pass
                 continue
 
             tab_m = msg_tab_pattern.match(line_str)
             if tab_m:
-                time_part, sender, body = tab_m.group(1).strip(), tab_m.group(2).strip(), tab_m.group(3)
-                hour = 12
-                minute = 0
-                time_clean = time_part
-                is_pm = "下午" in time_clean or "PM" in time_clean.upper()
-                time_clean = re.sub(r"[上午下午AaPpMm\s]", "", time_clean)
-                if ":" in time_clean:
-                    parts = time_clean.split(":")
-                    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                        hour = int(parts[0])
-                        minute = int(parts[1])
-                        if is_pm and hour < 12:
-                            hour += 12
-                        elif not is_pm and "上午" in time_part and hour == 12:
-                            hour = 0
-
-                try:
-                    dt = datetime.datetime(
-                        current_date.year,
-                        current_date.month,
-                        current_date.day,
-                        hour,
-                        minute,
-                        tzinfo=datetime.timezone.utc,
-                    )
-                    ts_ms = int(dt.timestamp() * 1000) + (imported_messages % 60) * 1000
-                except (ValueError, OverflowError):
-                    ts_ms = base_ts + imported_messages * 1000
-
-                content_type = "text"
-                file_name = ""
-                body_clean = body.strip()
-                if body_clean in ("[照片]", "[Photo]", "[圖片]"):
-                    content_type = "image"
-                elif body_clean in ("[影片]", "[Video]"):
-                    content_type = "video"
-                elif body_clean in ("[語音訊息]", "[Voice message]", "[音訊]"):
-                    content_type = "audio"
-                elif body_clean.startswith("[檔案]") or body_clean.startswith("[File]"):
-                    content_type = "file"
-                    file_name = body_clean.replace("[檔案]", "").replace("[File]", "").strip()
-
-                msg_id = f"msg_imp_{chat_id[-6:]}_{imported_messages+1:04d}"
-                sender_id = "u_me" if sender in ("我", "Me") else f"u_{_sanitize_path_part(sender)[:10]}"
-
-                self.db.upsert_message(
-                    message_id=msg_id,
-                    chat_id=chat_id,
-                    sender_id=sender_id,
-                    sender_name=sender,
-                    timestamp_ms=ts_ms,
-                    content_type=content_type,
-                    text_content=body,
-                    file_name=file_name,
-                    media_status="none",
-                )
-                imported_messages += 1
-            else:
-                space_parts = line_str.split(" ", 2)
-                if len(space_parts) == 3 and re.match(r"^\d{1,2}:\d{2}$", space_parts[0]):
-                    time_part, sender, body = space_parts[0], space_parts[1], space_parts[2]
-                    parts = time_part.split(":")
-                    hour = int(parts[0]) if parts[0].isdigit() else 12
-                    minute = int(parts[1]) if parts[1].isdigit() else 0
+                if tab_m.group(1) and tab_m.group(2) and tab_m.group(3):
                     try:
-                        dt = datetime.datetime(
-                            current_date.year,
-                            current_date.month,
-                            current_date.day,
-                            hour,
-                            minute,
-                            tzinfo=datetime.timezone.utc,
+                        current_date = datetime.date(
+                            int(tab_m.group(1)),
+                            int(tab_m.group(2)),
+                            int(tab_m.group(3)),
                         )
-                        ts_ms = int(dt.timestamp() * 1000) + (imported_messages % 60) * 1000
-                    except (ValueError, OverflowError):
-                        ts_ms = base_ts + imported_messages * 1000
+                    except ValueError:
+                        pass
+                time_part = tab_m.group(4).strip()
+                sender = tab_m.group(5).strip()
+                body = tab_m.group(6)
+                c_type, f_name = _classify_body(body)
+                parsed_records.append({
+                    "sender": sender,
+                    "timestamp_ms": _parse_time_to_ms(current_date, time_part, len(parsed_records)),
+                    "content_type": c_type,
+                    "text_content": body,
+                    "file_name": f_name,
+                })
+                continue
 
-                    content_type = "text"
-                    file_name = ""
-                    body_clean = body.strip()
-                    if body_clean in ("[照片]", "[Photo]", "[圖片]"):
-                        content_type = "image"
-                    elif body_clean in ("[影片]", "[Video]"):
-                        content_type = "video"
-                    elif body_clean in ("[語音訊息]", "[Voice message]", "[音訊]"):
-                        content_type = "audio"
-                    elif body_clean.startswith("[檔案]") or body_clean.startswith("[File]"):
-                        content_type = "file"
-                        file_name = body_clean.replace("[檔案]", "").replace("[File]", "").strip()
+            space_m = msg_space_pattern.match(line_str)
+            if space_m:
+                if space_m.group(1) and space_m.group(2) and space_m.group(3):
+                    try:
+                        current_date = datetime.date(
+                            int(space_m.group(1)),
+                            int(space_m.group(2)),
+                            int(space_m.group(3)),
+                        )
+                    except ValueError:
+                        pass
+                time_part = space_m.group(4).strip()
+                sender = space_m.group(5).strip()
+                body = space_m.group(6)
+                c_type, f_name = _classify_body(body)
+                parsed_records.append({
+                    "sender": sender,
+                    "timestamp_ms": _parse_time_to_ms(current_date, time_part, len(parsed_records)),
+                    "content_type": c_type,
+                    "text_content": body,
+                    "file_name": f_name,
+                })
+                continue
 
-                    msg_id = f"msg_imp_{chat_id[-6:]}_{imported_messages+1:04d}"
-                    sender_id = "u_me" if sender in ("我", "Me") else f"u_{_sanitize_path_part(sender)[:10]}"
+            # Continuation line of a multi-line message (if we already started parsing messages)
+            if parsed_records:
+                parsed_records[-1]["text_content"] += "\n" + stripped
 
-                    self.db.upsert_message(
-                        message_id=msg_id,
-                        chat_id=chat_id,
-                        sender_id=sender_id,
-                        sender_name=sender,
-                        timestamp_ms=ts_ms,
-                        content_type=content_type,
-                        text_content=body,
-                        file_name=file_name,
-                        media_status="none",
-                    )
-                    imported_messages += 1
+        # Fallback: if the user selected a plain .txt file without HH:MM headers, import non-empty lines
+        if not parsed_records:
+            for idx, raw_line in enumerate(lines):
+                stripped = raw_line.strip()
+                if not stripped or stripped.startswith("[LINE]"):
+                    continue
+                sender = "匯入紀錄"
+                body = stripped
+                if ":" in stripped or "：" in stripped:
+                    sep = "：" if "：" in stripped else ":"
+                    parts = stripped.split(sep, 1)
+                    if 1 <= len(parts[0].strip()) <= 20 and parts[1].strip():
+                        sender = parts[0].strip()
+                        body = parts[1].strip()
+                parsed_records.append({
+                    "sender": sender,
+                    "timestamp_ms": base_ts + idx * 1000,
+                    "content_type": "text",
+                    "text_content": body,
+                    "file_name": "",
+                })
+
+        imported_messages = 0
+        for idx, rec in enumerate(parsed_records, start=1):
+            sender = rec["sender"]
+            msg_hash = hashlib.sha1(f"{chat_id}_{idx}_{rec['timestamp_ms']}_{rec['text_content'][:32]}".encode("utf-8")).hexdigest()[:6]
+            msg_id = f"msg_imp_{chat_id[-6:]}_{idx:04d}_{msg_hash}"
+            sender_id = "u_me" if sender in ("我", "Me") else f"u_{_sanitize_path_part(sender)[:10]}"
+            self.db.upsert_message(
+                message_id=msg_id,
+                chat_id=chat_id,
+                sender_id=sender_id,
+                sender_name=sender,
+                timestamp_ms=rec["timestamp_ms"],
+                content_type=rec["content_type"],
+                text_content=rec["text_content"],
+                file_name=rec["file_name"],
+                media_status="none",
+            )
+            imported_messages += 1
 
         analyzed = False
         if analyzer and imported_messages > 0:

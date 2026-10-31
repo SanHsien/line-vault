@@ -25,6 +25,21 @@
   --radius-lg: 14px;
 }
 
+:root[data-theme="light"] {
+  --bg-main: #f1f5f9;
+  --bg-pane: #ffffff;
+  --bg-card: #f8fafc;
+  --bg-card-hover: #e2e8f0;
+  --border-color: #cbd5e1;
+  --border-subtle: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --text-sub: #64748b;
+
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px -1px rgba(15, 23, 42, 0.1), 0 2px 4px -1px rgba(15, 23, 42, 0.06);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -1446,5 +1461,71 @@ body > *:not(.app-header):not(.main-layout):not(.modal-overlay):not(.toast-conta
   color: #93c5fd;
   font-size: 11px;
 }
+
+/* ==========================================================================
+   Light Theme Component Overrides (:root[data-theme="light"])
+   ========================================================================== */
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+:root[data-theme="light"] .kpi-card {
+  background: #f8fafc;
+}
+:root[data-theme="light"] .pane-header {
+  background: #f8fafc;
+}
+:root[data-theme="light"] .chat-card-type-tag,
+:root[data-theme="light"] .action-category-tag {
+  background: #e2e8f0;
+  color: #334155;
+}
+:root[data-theme="light"] .filter-bar {
+  background: #f8fafc;
+}
+:root[data-theme="light"] .message-row.mine .message-bubble {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #0f172a;
+}
+:root[data-theme="light"] .file-attachment-card {
+  background: #f1f5f9;
+}
+:root[data-theme="light"] .summary-text {
+  color: #1e293b;
+}
+:root[data-theme="light"] .action-item-card,
+:root[data-theme="light"] .file-health-item,
+:root[data-theme="light"] .suggested-reply-card,
+:root[data-theme="light"] .onboarding-step {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+:root[data-theme="light"] .reply-text {
+  color: #334155;
+}
+:root[data-theme="light"] .toast {
+  background: #ffffff;
+  color: #0f172a;
+}
+:root[data-theme="light"] .settings-import-section {
+  background: #f8fafc;
+}
+:root[data-theme="light"] .btn-accent {
+  background: rgba(6, 199, 85, 0.14);
+  color: #047857;
+  border-color: rgba(6, 199, 85, 0.5);
+}
+:root[data-theme="light"] .btn-accent:hover {
+  background: #059669;
+  color: #ffffff;
+}
+:root[data-theme="light"] .help-list code {
+  background: #e2e8f0;
+  color: #1d4ed8;
+}
+
 
 

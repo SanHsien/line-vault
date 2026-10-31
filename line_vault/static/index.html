@@ -46,6 +46,9 @@
         <button id="btnOpenHelp" class="btn btn-outline" title="查看快速開始與測試指南">
           <span class="btn-icon">❓</span> <span id="txtBtnHelp">使用說明</span>
         </button>
+        <button id="btnThemeToggle" class="btn btn-outline" title="切換外觀主題：跟隨系統 / 亮白 / 深色">
+          <span class="btn-icon" id="themeToggleIcon">🌓</span> <span id="themeToggleLabel">跟隨系統</span>
+        </button>
         <button id="btnLangToggle" class="btn btn-outline" title="切換語言 / Switch Language">
           <span class="btn-icon">🌐</span> <span id="langToggleLabel">English</span>
         </button>
@@ -195,16 +198,24 @@
             <span class="label">Windows LINE 偵測：</span>
             <span id="settingsLineStatus" class="val tag-blue">檢查中...</span>
           </div>
+          <div class="settings-status-item">
+            <span class="label">內建讀取引擎：</span>
+            <span class="val tag-green">已內建 (免外部腳本)</span>
+          </div>
         </div>
 
         <div class="settings-form-group">
-          <label>LINE 快取與資料目錄 (可留空使用預設路徑)：</label>
-          <input type="text" id="inputLineDataDir" placeholder="%LOCALAPPDATA%\LINE\Data" />
+          <label id="txtThemeSettingLabel">介面外觀主題 (深色 / 亮白 / 跟隨系統)：</label>
+          <div class="chat-filters" style="margin-bottom: 0;">
+            <button type="button" class="filter-tab theme-opt-btn" data-theme-mode="system" id="btnThemeSystem">🌓 跟隨系統</button>
+            <button type="button" class="filter-tab theme-opt-btn" data-theme-mode="light" id="btnThemeLight">☀️ 亮白主題</button>
+            <button type="button" class="filter-tab theme-opt-btn" data-theme-mode="dark" id="btnThemeDark">🌙 深色主題</button>
+          </div>
         </div>
 
         <div class="settings-form-group">
-          <label>line-desktop-mcp 讀取引擎腳本路徑：</label>
-          <input type="text" id="inputReaderScript" placeholder="C:\GitHub\line-desktop-mcp\src\extensions\python\line-reader.py" />
+          <label>LINE 快取與資料目錄 (可留空自動偵測 %LOCALAPPDATA%\LINE)：</label>
+          <input type="text" id="inputLineDataDir" placeholder="%LOCALAPPDATA%\LINE" />
         </div>
 
         <div class="settings-form-row">
@@ -220,7 +231,7 @@
 
         <div class="settings-actions-group">
           <button id="btnModalSyncMcp" class="btn btn-primary">
-            <span>🔐 同步 LINE 加密資料庫 (MCP)</span>
+            <span>🔐 同步 LINE 資料庫與快取 (內建引擎)</span>
           </button>
           <button id="btnModalScanLine" class="btn btn-secondary">
             <span>🔄 掃描本機 LINE 快取資料夾</span>

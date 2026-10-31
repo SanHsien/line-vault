@@ -117,6 +117,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnHelpSeedDemo = document.getElementById("btnHelpSeedDemo");
   const btnHelpOpenSettings = document.getElementById("btnHelpOpenSettings");
 
+  const btnThemeToggle = document.getElementById("btnThemeToggle");
+  const themeToggleIcon = document.getElementById("themeToggleIcon");
+  const themeToggleLabel = document.getElementById("themeToggleLabel");
+  const themeOptBtns = document.querySelectorAll(".theme-opt-btn");
+
   const btnLangToggle = document.getElementById("btnLangToggle");
   const langToggleLabel = document.getElementById("langToggleLabel");
   const i18nSubtitle = document.getElementById("i18nSubtitle");
@@ -150,7 +155,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const settingsFts5 = document.getElementById("settingsFts5");
   const settingsLineStatus = document.getElementById("settingsLineStatus");
   const inputLineDataDir = document.getElementById("inputLineDataDir");
-  const inputReaderScript = document.getElementById("inputReaderScript");
   const inputSyncDays = document.getElementById("inputSyncDays");
   const inputTargetChatName = document.getElementById("inputTargetChatName");
   const btnModalSyncMcp = document.getElementById("btnModalSyncMcp");
@@ -170,7 +174,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const chatListContainer = document.getElementById("chatListContainer");
   const chatCountBadge = document.getElementById("chatCountBadge");
   const chatSearchInput = document.getElementById("chatSearchInput");
-  const filterTabs = document.querySelectorAll(".filter-tab");
+  const filterTabs = document.querySelectorAll(".pane-left .filter-tab");
 
   const activeChatAvatar = document.getElementById("activeChatAvatar");
   const activeChatTitle = document.getElementById("activeChatTitle");
@@ -994,7 +998,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (helpModal) helpModal.style.display = "none";
     settingsModal.style.display = "flex";
     inputLineDataDir.value = localStorage.getItem("line_vault_line_data_dir") || "";
-    inputReaderScript.value = localStorage.getItem("line_vault_reader_script") || "";
     inputSyncDays.value = localStorage.getItem("line_vault_sync_days") || "14";
     inputTargetChatName.value = localStorage.getItem("line_vault_target_chat") || "";
     toggleAutoPoll.checked = localStorage.getItem("line_vault_auto_poll") === "true";
@@ -1051,20 +1054,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Sync MCP Button in Modal
+  // Sync Built-in Native Engine Button in Modal
   if (btnModalSyncMcp) {
     btnModalSyncMcp.addEventListener("click", async () => {
       btnModalSyncMcp.disabled = true;
-      btnModalSyncMcp.innerHTML = "<span>⏳</span> 正在解密同步中...";
+      btnModalSyncMcp.innerHTML = "<span>⏳</span> 內建引擎同步中...";
 
       const chatName = inputTargetChatName.value.trim() || null;
       const days = parseInt(inputSyncDays.value || "14", 10);
-      const readerScript = inputReaderScript.value.trim() || null;
       const cacheDir = inputLineDataDir.value.trim() || null;
 
       // Persist preferences
       localStorage.setItem("line_vault_line_data_dir", inputLineDataDir.value.trim());
-      localStorage.setItem("line_vault_reader_script", inputReaderScript.value.trim());
       localStorage.setItem("line_vault_sync_days", days.toString());
       localStorage.setItem("line_vault_target_chat", inputTargetChatName.value.trim());
 
@@ -1075,37 +1076,33 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({
             chat_name: chatName,
             days: days,
-            reader_script: readerScript,
             cache_dir: cacheDir,
           }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
           const sr = data.sync_result || {};
-          if (sr.status === "reader_not_configured") {
-            showToast("找不到 line-desktop-mcp 讀取腳本，請確認路徑或先掃描快取", "⚠️");
-          } else {
-            showToast(
-              `MCP 同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
-              "🔐"
-            );
-            await fetchStatus();
-            await fetchChats();
-            if (chatsCache.length > 0 && !currentChatId) {
-              selectChat(chatsCache[0]);
-            } else if (currentChatId) {
-              loadCenterContent();
-              loadChatInsight(currentChatId);
-            }
+          if (settingsModal) settingsModal.style.display = "none";
+          showToast(
+            `內建引擎同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則紀錄，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
+            "🔐"
+          );
+          await fetchStatus();
+          await fetchChats();
+          if (chatsCache.length > 0 && !currentChatId) {
+            selectChat(chatsCache[0]);
+          } else if (currentChatId) {
+            loadCenterContent();
+            loadChatInsight(currentChatId);
           }
         } else {
-          showToast(data.error || "同步失敗，請檢查設定與 LINE 程序", "❌");
+          showToast(data.error || "同步失敗，請檢查設定與 LINE 目錄", "❌");
         }
       } catch (err) {
         showToast("同步出錯: " + err.message, "❌");
       } finally {
         btnModalSyncMcp.disabled = false;
-        btnModalSyncMcp.innerHTML = "<span>🔐 同步 LINE 加密資料庫 (MCP)</span>";
+        btnModalSyncMcp.innerHTML = "<span>🔐 同步 LINE 資料庫與快取 (內建引擎)</span>";
       }
     });
   }
@@ -1200,12 +1197,83 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 11. Language Toggle Button
+  // 11. Theme (System / Light / Dark) & Language Toggle
+  let currentThemeMode = localStorage.getItem("line_vault_theme") || "system";
+  const systemLightMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+
+  function applyTheme(mode) {
+    currentThemeMode = ["system", "light", "dark"].includes(mode) ? mode : "system";
+    localStorage.setItem("line_vault_theme", currentThemeMode);
+
+    let effectiveTheme = currentThemeMode;
+    if (currentThemeMode === "system") {
+      effectiveTheme = (systemLightMedia && systemLightMedia.matches) ? "light" : "dark";
+    }
+    document.documentElement.setAttribute("data-theme", effectiveTheme);
+
+    if (themeToggleIcon && themeToggleLabel) {
+      if (currentThemeMode === "system") {
+        themeToggleIcon.textContent = "🌓";
+        themeToggleLabel.textContent = currentLang === "en" ? "System" : "跟隨系統";
+      } else if (currentThemeMode === "light") {
+        themeToggleIcon.textContent = "☀️";
+        themeToggleLabel.textContent = currentLang === "en" ? "Light" : "亮白主題";
+      } else {
+        themeToggleIcon.textContent = "🌙";
+        themeToggleLabel.textContent = currentLang === "en" ? "Dark" : "深色主題";
+      }
+    }
+
+    themeOptBtns.forEach(btn => {
+      if (btn.getAttribute("data-theme-mode") === currentThemeMode) {
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("active");
+      }
+    });
+  }
+
+  if (systemLightMedia && systemLightMedia.addEventListener) {
+    systemLightMedia.addEventListener("change", () => {
+      if (currentThemeMode === "system") {
+        applyTheme("system");
+      }
+    });
+  }
+
+  if (btnThemeToggle) {
+    btnThemeToggle.addEventListener("click", () => {
+      const order = ["system", "light", "dark"];
+      const nextMode = order[(order.indexOf(currentThemeMode) + 1) % order.length];
+      applyTheme(nextMode);
+      const labelMap = {
+        system: currentLang === "en" ? "Theme: Follow System" : "外觀主題：🌓 跟隨系統",
+        light: currentLang === "en" ? "Theme: Light Mode" : "外觀主題：☀️ 亮白主題",
+        dark: currentLang === "en" ? "Theme: Dark Mode" : "外觀主題：🌙 深色主題",
+      };
+      showToast(labelMap[nextMode], nextMode === "light" ? "☀️" : (nextMode === "dark" ? "🌙" : "🌓"));
+    });
+  }
+
+  themeOptBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      const mode = btn.getAttribute("data-theme-mode") || "system";
+      applyTheme(mode);
+      const labelMap = {
+        system: currentLang === "en" ? "Theme: Follow System" : "外觀主題：🌓 跟隨系統",
+        light: currentLang === "en" ? "Theme: Light Mode" : "外觀主題：☀️ 亮白主題",
+        dark: currentLang === "en" ? "Theme: Dark Mode" : "外觀主題：🌙 深色主題",
+      };
+      showToast(labelMap[mode], mode === "light" ? "☀️" : (mode === "dark" ? "🌙" : "🌓"));
+    });
+  });
+
   if (btnLangToggle) {
     btnLangToggle.addEventListener("click", () => {
       currentLang = currentLang === "zh-TW" ? "en" : "zh-TW";
       localStorage.setItem("line_vault_lang", currentLang);
       updateLanguageUI();
+      applyTheme(currentThemeMode);
       if (currentChatId) {
         loadChatInsight(currentChatId);
       }
@@ -1268,7 +1336,21 @@ document.addEventListener("DOMContentLoaded", () => {
       selectedImportFileName = file.name;
       const reader = new FileReader();
       reader.onload = (event) => {
-        selectedImportFileContent = event.target.result;
+        const buffer = event.target.result;
+        let decoded = "";
+        try {
+          const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+          decoded = utf8Decoder.decode(buffer);
+        } catch (utf8Err) {
+          try {
+            const big5Decoder = new TextDecoder("big5");
+            decoded = big5Decoder.decode(buffer);
+          } catch (fallbackErr) {
+            const lenientDecoder = new TextDecoder("utf-8");
+            decoded = lenientDecoder.decode(buffer);
+          }
+        }
+        selectedImportFileContent = decoded;
         if (importFileStatus) {
           importFileStatus.textContent = `已選擇: ${file.name} (${formatBytes(file.size)})`;
           importFileStatus.style.color = "var(--accent-green)";
@@ -1278,7 +1360,7 @@ document.addEventListener("DOMContentLoaded", () => {
       reader.onerror = () => {
         showToast("檔案讀取失敗", "❌");
       };
-      reader.readAsText(file, "UTF-8");
+      reader.readAsArrayBuffer(file);
     });
   }
 
@@ -1348,6 +1430,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initial Load
   updateLanguageUI();
+  applyTheme(currentThemeMode);
   loadCenterContent();
   fetchStatus();
   fetchChats().then(() => {

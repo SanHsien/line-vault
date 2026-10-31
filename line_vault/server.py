@@ -32,10 +32,13 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
     def _resolve_safe_scan_dir(self, user_dir: str | None) -> str | None:
         """Resolve and validate custom LINE scan directory against path injection."""
         local_appdata = os.environ.get("LOCALAPPDATA", "")
+        default_line_root = None
         default_line_dir = None
         if local_appdata:
-            candidate = Path(local_appdata) / "LINE" / "Data"
-            default_line_dir = str(candidate if candidate.exists() else Path(local_appdata) / "LINE")
+            line_base = Path(local_appdata) / "LINE"
+            default_line_root = os.path.normpath(os.path.realpath(str(line_base)))
+            candidate = line_base / "Data"
+            default_line_dir = str(candidate if candidate.exists() else line_base)
 
         if not user_dir or not str(user_dir).strip():
             return default_line_dir if (default_line_dir and os.path.isdir(default_line_dir)) else None
@@ -43,6 +46,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         user_dir_str = str(user_dir).strip()
         if default_line_dir and user_dir_str in (
             default_line_dir,
+            default_line_root,
             "%LOCALAPPDATA%\\LINE\\Data",
             "%LOCALAPPDATA%\\LINE",
         ):
@@ -50,7 +54,10 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
         base_root = os.path.normpath(os.path.realpath(str(self.allowed_scan_root)))
         fullpath = os.path.normpath(os.path.realpath(user_dir_str))
-        if not fullpath.startswith(base_root):
+        allowed_by_root = fullpath.startswith(base_root) or bool(
+            default_line_root and fullpath.startswith(default_line_root)
+        )
+        if not allowed_by_root:
             return None
         if not os.path.isdir(fullpath):
             return None

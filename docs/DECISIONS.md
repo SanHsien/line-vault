@@ -89,6 +89,9 @@
   1. `cli.py` 啟動桌面視窗時強制指定隔離設定檔 `--user-data-dir=<vault_dir>/.gui_profile` 並加上 `--disable-extensions`、`--disable-component-extensions-with-background-pages`、`--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2`，搭配 CSS 與 `MutationObserver` 雙重屏蔽非原生容器節點，徹底杜絕任何第三方擴充套件注入。
   2. `.app-header` 改為 `flex-wrap: wrap` 自適應排版與橫向膠囊 KPI 卡片，並內建「❓ 使用說明」視窗與中央「🚀 3 步快速開始與測試指南」互動面板。
   3. 在 `tests/test_line_vault.py` 新增 `test_frontend_js_syntax_and_dom_ids_integrity` 機械防線，逐行檢查 `app.js` 括號／字串／模板語法平衡、防止根區塊提前閉合，並強制驗證所有 `document.getElementById` 與 `index.html` 100% 對齊。
+  4. **重要教訓（2026-10-31）**：
+     - `tools/build_release.ps1` 在重新編譯 `dist/LINE-Vault-win64.exe` 時若執行 `Stop-Process` 釋放檔案鎖定，卻未在編譯完成後自動重啟背景服務（`--no-window`），會導致使用者已開啟在桌面上的 `http://127.0.0.1:8765` 視窗失去後端連線，點擊任何按鈕（載入範例、重新分析全部、匯入文字、同步資料庫、掃描快取）皆因 `ERR_CONNECTION_REFUSED` 顯示失敗。已在 `build_release.ps1` 結尾強制自動重啟背景服務。
+     - PyInstaller 封裝後的 `sys.executable` 指向 `LINE-Vault-win64.exe` 本身而非 `python.exe`，因此本機 LINE 讀取引擎必須直接以原生 Python 模組（`line_vault/line_reader.py` 的 `BuiltinLineReader`）在行程內（In-process）執行，絕不可在預設路徑下透過 `subprocess.run([sys.executable, ...])` 呼叫外部 `.py` 腳本。
 
 ---
 

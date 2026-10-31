@@ -1222,3 +1222,88 @@ def test_non_ascii_media_and_report_download(tmp_path: Path):
         server.server_close()
 
 
+def test_builtin_native_line_reader_and_xor_media(tmp_path: Path):
+    """Verify BuiltinLineReader works out-of-the-box without any external script and deobfuscates XOR media."""
+    from line_vault.line_reader import try_deobfuscate_xor_media
+
+    mock_line_root = tmp_path / "LINE"
+    mock_data_dir = mock_line_root / "Data"
+    mock_data_dir.mkdir(parents=True)
+
+    # 1. Create a mock .edb-wal file containing readable CJK conversation snippets
+    wal_file = mock_data_dir / "talk.edb-wal"
+    wal_file.write_bytes(
+        b"\x00\x01WAL_HEADER\x00"
+        + "請記得本週五前提交季度財務報表與合約正本，金額共 NT$ 88,000 元。".encode("utf-8")
+        + b"\x00\x00"
+    )
+
+    # 2. Create a single-byte XOR obfuscated PNG file (key = 0x5A)
+    valid_png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00"
+        b"IEND\xaeB`\x82"
+    )
+    xor_png = bytes(b ^ 0x5A for b in valid_png)
+    xor_file = mock_data_dir / "cache_img_xor01"
+    xor_file.write_bytes(xor_png)
+
+    # Verify deobfuscation helper directly
+    assert try_deobfuscate_xor_media(xor_png) == valid_png
+
+    # 3. Verify sync_from_mcp_reader uses BuiltinLineReader when no external script exists
+    db = VaultDB(tmp_path / "vault.db")
+    archiver = MediaArchiver(tmp_path / "vault", db)
+    analyzer = ChatAnalyzer(db)
+
+    sync_res = archiver.sync_from_mcp_reader(
+        days=14,
+        analyzer=analyzer,
+        reader_script=tmp_path / "non_existent_reader.py",
+        cache_root=mock_line_root,
+    )
+    assert sync_res["status"] == "ok"
+    assert sync_res["engine"] == "builtin-native-reader"
+    assert sync_res["chats_synced"] >= 2
+    assert sync_res["media_archived"] == 1
+
+
+def test_theme_modes_and_plain_txt_import(tmp_path: Path):
+    """Verify light/dark/system theme support in static assets and fallback plain .txt import."""
+    repo_root = Path(__file__).resolve().parent.parent
+    index_html = (repo_root / "line_vault" / "static" / "index.html").read_text(encoding="utf-8")
+    styles_css = (repo_root / "line_vault" / "static" / "styles.css").read_text(encoding="utf-8")
+    app_js = (repo_root / "line_vault" / "static" / "app.js").read_text(encoding="utf-8")
+
+    # Verify no external script input box remains in index.html
+    assert "inputReaderScript" not in index_html
+    # Verify theme toggle and 3 theme modes exist
+    assert 'id="btnThemeToggle"' in index_html
+    assert ':root[data-theme="light"]' in styles_css
+    assert "applyTheme" in app_js
+
+    # Verify plain .txt import (without HH:MM tabs) and sample_line_chat_export.txt
+    db = VaultDB(tmp_path / "txt.db")
+    archiver = MediaArchiver(tmp_path / "txt_vault", db)
+    analyzer = ChatAnalyzer(db)
+
+    plain_res = archiver.import_line_text_export(
+        chat_name="一般文字備忘錄",
+        text_content="王經理：請於明天下午三點前確認合約條款\n陳工程師：收到，馬上處理！",
+        analyzer=analyzer,
+    )
+    assert plain_res["status"] == "ok"
+    assert plain_res["imported_messages"] == 2
+
+    sample_path = repo_root / "docs" / "sample_line_chat_export.txt"
+    assert sample_path.is_file()
+    sample_res = archiver.import_line_text_export(
+        chat_name="",
+        text_content=sample_path.read_text(encoding="utf-8"),
+        analyzer=analyzer,
+    )
+    assert sample_res["status"] == "ok"
+    assert sample_res["imported_messages"] == 6
+
+
+

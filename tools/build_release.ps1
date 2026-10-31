@@ -50,6 +50,7 @@ Write-Host "==> Packaging Release Bundle ($zipPath)"
 Compress-Archive -Path @(
     $exePath,
     (Join-Path $repoRoot "start_line_vault.bat"),
+    (Join-Path $repoRoot "docs\sample_line_chat_export.txt"),
     (Join-Path $repoRoot "README.md"),
     (Join-Path $repoRoot "README.en.md"),
     (Join-Path $repoRoot "LICENSE")
@@ -58,5 +59,17 @@ Compress-Archive -Path @(
 if (Test-Path -LiteralPath (Join-Path $repoRoot "LINE-Vault-win64.spec")) {
     Remove-Item -LiteralPath (Join-Path $repoRoot "LINE-Vault-win64.spec") -Force
 }
+
+# Always start/restart the background engine on port 8765 outside any transient job object so open GUI windows stay connected
+$distWorkingDir = Split-Path -Parent $exePath
+try {
+    $null = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine      = "`"$exePath`" --no-window"
+        CurrentDirectory = $distWorkingDir
+    } -ErrorAction Stop
+} catch {
+    Start-Process -FilePath $exePath -WorkingDirectory $distWorkingDir -ArgumentList "--no-window"
+}
+Start-Sleep -Milliseconds 1200
 
 Write-Host "BUILD RELEASE GREEN: $exePath & $zipPath"
