@@ -936,7 +936,7 @@ class MediaArchiver:
             raise ValueError(f"Chat not found: {chat_id}")
 
         chat_name = chat.get("chat_name") or "未命名聊天室"
-        safe_name = _sanitize_path_part(chat_name)
+        safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", chat_name).strip(" ._") or _sanitize_path_part(chat_id)
         messages = self.db.search_messages(chat_id=chat_id, limit=5000)
         insight = self.db.get_latest_insight(chat_id)
 

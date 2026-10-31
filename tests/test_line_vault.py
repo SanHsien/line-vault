@@ -1180,3 +1180,45 @@ def test_frontend_js_syntax_and_dom_ids_integrity():
     assert "flex-wrap: wrap" in styles_css
     assert "not(.app-header)" in styles_css
 
+
+def test_non_ascii_media_and_report_download(tmp_path: Path):
+    """Verify downloading Chinese-named media ('正式報價合約_Q4.pdf') and Chinese chat reports succeeds without latin-1 header errors."""
+    server = create_server(vault_dir=tmp_path / "vault_dl", host="127.0.0.1", port=0)
+    port = server.server_port
+    base_url = f"http://127.0.0.1:{port}"
+    th = threading.Thread(target=server.serve_forever, daemon=True)
+    th.start()
+
+    try:
+        # 1. Seed demo data
+        req_seed = urllib.request.Request(f"{base_url}/api/demo/seed", data=b"{}", method="POST")
+        with urllib.request.urlopen(req_seed) as res_seed:
+            assert res_seed.status == 200
+
+        # 2. Find '正式報價合約_Q4.pdf' in /api/media
+        with urllib.request.urlopen(f"{base_url}/api/media") as res_media:
+            media_items = json.loads(res_media.read().decode("utf-8"))
+        pdf_item = next((m for m in media_items if m["file_name"] == "正式報價合約_Q4.pdf"), None)
+        assert pdf_item is not None, "正式報價合約_Q4.pdf should exist in demo media"
+
+        # 3. Download /api/media/file/<media_id> for '正式報價合約_Q4.pdf'
+        with urllib.request.urlopen(f"{base_url}/api/media/file/{pdf_item['media_id']}") as res_pdf:
+            assert res_pdf.status == 200
+            pdf_bytes = res_pdf.read()
+            assert pdf_bytes.startswith(b"%PDF-1.4")
+            disp = res_pdf.headers.get("Content-Disposition", "")
+            assert "filename*=UTF-8''" in disp
+            assert urllib.parse.quote("正式報價合約_Q4.pdf") in disp
+
+        # 4. Download /api/export/c_proj_delivery (chat_name='專案A-客戶交付群')
+        with urllib.request.urlopen(f"{base_url}/api/export/c_proj_delivery?fmt=markdown") as res_exp:
+            assert res_exp.status == 200
+            exp_disp = res_exp.headers.get("Content-Disposition", "")
+            assert urllib.parse.quote("line_vault_report_專案A-客戶交付群.md") in exp_disp
+            exp_text = res_exp.read().decode("utf-8")
+            assert "專案A-客戶交付群" in exp_text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+

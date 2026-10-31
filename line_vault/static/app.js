@@ -1225,9 +1225,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const blob = await res.blob();
         const disposition = res.headers.get("Content-Disposition") || "";
         let filename = `line_vault_report_${currentChatId}.md`;
-        const match = disposition.match(/filename="?([^";]+)"?/);
-        if (match && match[1]) {
-          filename = match[1];
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;\s]+)/i);
+        const asciiMatch = disposition.match(/filename="?([^";]+)"?/);
+        if (utf8Match && utf8Match[1]) {
+          try {
+            filename = decodeURIComponent(utf8Match[1]);
+          } catch (e) {
+            filename = utf8Match[1];
+          }
+        } else if (asciiMatch && asciiMatch[1]) {
+          filename = asciiMatch[1];
         }
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");

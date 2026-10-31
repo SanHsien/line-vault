@@ -206,14 +206,15 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             try:
                 filename, mime_type, content = self.archiver.export_chat_report(chat_id, fmt=fmt)
                 body = content.encode("utf-8")
-                safe_name = urllib.parse.quote(filename)
+                safe_ascii_name = re.sub(r"[^A-Za-z0-9_.\-]", "_", filename)
+                safe_utf8_name = urllib.parse.quote(filename)
                 self.send_response(200)
                 self._send_cors_headers()
                 self.send_header("Content-Type", mime_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header(
                     "Content-Disposition",
-                    f'attachment; filename="{filename}"; filename*=UTF-8\'\'{safe_name}',
+                    f'attachment; filename="{safe_ascii_name}"; filename*=UTF-8\'\'{safe_utf8_name}',
                 )
                 self.end_headers()
                 self.wfile.write(body)
@@ -417,7 +418,8 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         mime_type = media.get("mime_type") or "application/octet-stream"
         file_size = os.path.getsize(fullpath)
         filename = media.get("file_name") or file_path.name
-        safe_ascii_name = re.sub(r"[^\w\-.]", "_", filename)
+        safe_ascii_name = re.sub(r"[^A-Za-z0-9_.\-]", "_", filename)
+        safe_utf8_name = urllib.parse.quote(filename)
 
         m_type = media.get("media_type")
         disposition_type = "inline" if m_type in ("image", "video", "audio") else "attachment"
@@ -428,7 +430,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(file_size))
         self.send_header(
             "Content-Disposition",
-            f'{disposition_type}; filename="{safe_ascii_name}"; filename*=UTF-8\'\'{urllib.parse.quote(filename)}',
+            f'{disposition_type}; filename="{safe_ascii_name}"; filename*=UTF-8\'\'{safe_utf8_name}',
         )
         self.end_headers()
 
