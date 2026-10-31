@@ -1378,7 +1378,7 @@ def test_unlimited_txt_messages_and_delete_clear_about_apis(tmp_path: Path):
         # Verify GET /api/about returns app metadata
         with urllib.request.urlopen(f"{base_url}/api/about") as resp:
             about = json.loads(resp.read().decode("utf-8"))
-            assert about["version"] == "1.2.0"
+            assert about["version"] == "1.2.1"
             assert about["author"] == "SanHsien"
             assert "github.com/SanHsien/line-vault" in about["github_repo_url"]
 
@@ -1728,4 +1728,62 @@ def test_native_sync_days_zero_unlimited_and_community_and_type_filters(tmp_path
     db.close()
 
 
+def test_community_square_name_resolution_and_folder_migration(tmp_path: Path):
+    """Verify _square and _squareChat resolve real community names and migrate legacy folders."""
+    import sqlite3
 
+    from line_vault.line_reader import BuiltinLineReader
+
+    vault_dir = tmp_path / "vault_comm"
+    db = VaultDB(vault_dir / "vault.db")
+    archiver = MediaArchiver(vault_dir, db)
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE _contact (_mid TEXT, _displayNameOverridden TEXT, _displayName TEXT);")
+    conn.execute("CREATE TABLE _groupChat (_chatMid TEXT, _chatName TEXT);")
+    conn.execute("CREATE TABLE _square (_mid TEXT, _name TEXT);")
+    conn.execute("CREATE TABLE _squareChat (_squareChatMid TEXT, _squareMid TEXT, _name TEXT);")
+    conn.execute("CREATE TABLE _squareMember (_squareMemberMid TEXT, _displayName TEXT);")
+    conn.execute(
+        """
+        CREATE TABLE _message (
+            _id INTEGER PRIMARY KEY,
+            _chatId TEXT,
+            _from TEXT,
+            _createdTime INTEGER,
+            _text TEXT,
+            _contentType INTEGER,
+            _contentMetadata TEXT,
+            _contentInfo TEXT
+        );
+        """
+    )
+
+    conn.execute("INSERT INTO _square VALUES ('s_open_01', '台灣開源技術社群');")
+    conn.execute("INSERT INTO _squareChat VALUES ('m_chat_01', 's_open_01', 'AI 技術交流分區');")
+    conn.execute("INSERT INTO _squareMember VALUES ('u_mem_01', '小明工程師');")
+    conn.execute("INSERT INTO _message VALUES (1, 'm_chat_01', 'u_mem_01', 1700000000000, '大家早安', 0, '{}', '{}');")
+
+    reader = BuiltinLineReader()
+    c_cnt, m_cnt, med_cnt = reader._sync_decrypted_sqlite_db(
+        conn=conn,
+        archiver=archiver,
+        chat_name_filter=None,
+        days=0,
+    )
+
+    assert c_cnt == 1
+    assert m_cnt == 1
+
+    chat_row = db.get_chat("m_chat_01")
+    assert chat_row is not None
+    assert chat_row["chat_type"] == "community"
+    assert "台灣開源技術社群" in chat_row["chat_name"]
+    assert "AI 技術交流分區" in chat_row["chat_name"]
+
+    msgs = db.search_messages(chat_id="m_chat_01", limit=0)
+    assert len(msgs) == 1
+    assert msgs[0]["sender_name"] == "小明工程師"
+
+    db.close()
+    conn.close()

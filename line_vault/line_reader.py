@@ -640,6 +640,47 @@ class BuiltinLineReader:
         except sqlite3.Error:
             pass
 
+        # 2b. Build square (community) map (_mid -> _name) and square chat map (_squareChatMid -> displayName)
+        square_names: dict[str, str] = {}
+        try:
+            for smid, sname in conn.execute("SELECT _mid, _name FROM _square").fetchall():
+                if smid and sname and str(sname).strip():
+                    square_names[str(smid)] = str(sname).strip()
+        except sqlite3.Error:
+            pass
+
+        square_chat_names: dict[str, str] = {}
+        try:
+            for scmid, smid, scname in conn.execute(
+                "SELECT _squareChatMid, _squareMid, _name FROM _squareChat"
+            ).fetchall():
+                sq_name = square_names.get(str(smid), "") if smid else ""
+                c_name = str(scname).strip() if scname else ""
+                eff_name = ""
+                if sq_name and c_name:
+                    if sq_name == c_name:
+                        eff_name = sq_name
+                    else:
+                        eff_name = f"{sq_name} - {c_name}" if c_name not in sq_name else sq_name
+                elif sq_name:
+                    eff_name = sq_name
+                elif c_name:
+                    eff_name = c_name
+                if scmid and eff_name:
+                    square_chat_names[str(scmid)] = eff_name
+        except sqlite3.Error:
+            pass
+
+        # Also load square members into contact_names for community member display
+        try:
+            for smmid, dname in conn.execute(
+                "SELECT _squareMemberMid, _displayName FROM _squareMember"
+            ).fetchall():
+                if smmid and dname and str(dname).strip():
+                    contact_names[str(smmid)] = str(dname).strip()
+        except sqlite3.Error:
+            pass
+
         # 3. Determine active chats within requested window (days <= 0 implies all-time without limit)
         now_ms = int(time.time() * 1000)
         if days > 0:
@@ -671,20 +712,20 @@ class BuiltinLineReader:
         for raw_chat_id, _last_ts, _msg_cnt in active_rows:
             c_id = str(raw_chat_id)
             # Classify chat type: community ('m' / 's'), group ('c' / 'r'), direct ('u')
-            if c_id.startswith(("m", "s")):
+            if c_id.startswith(("m", "s")) or c_id in square_chat_names or c_id in square_names:
                 c_type = "community"
-            elif c_id.startswith(("c", "r")):
+            elif c_id.startswith(("c", "r")) or c_id in group_names:
                 c_type = "group"
-            elif c_id.startswith("u"):
-                c_type = "direct"
-            elif c_id in group_names:
-                c_type = "group"
-            elif c_id in contact_names:
+            elif c_id.startswith("u") or c_id in contact_names:
                 c_type = "direct"
             else:
                 c_type = "community" if c_id.startswith(("m", "s")) else ("group" if c_id.startswith(("c", "r")) else "direct")
 
-            if c_id in group_names:
+            if c_id in square_chat_names:
+                c_name = square_chat_names[c_id]
+            elif c_id in square_names:
+                c_name = square_names[c_id]
+            elif c_id in group_names:
                 c_name = group_names[c_id]
             elif c_id in contact_names:
                 c_name = contact_names[c_id]
@@ -718,6 +759,30 @@ class BuiltinLineReader:
             if chat_name_filter and chat_name_filter.strip():
                 if chat_name_filter.strip().casefold() not in c_name.casefold():
                     continue
+
+            # If chat previously had a legacy placeholder name, migrate existing on-disk folder to true name
+            old_chat = archiver.db.get_chat(c_id)
+            if old_chat and old_chat.get("chat_name") and old_chat["chat_name"] != c_name:
+                try:
+                    storage_root = archiver._get_storage_root()
+                    old_sub = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(old_chat["chat_name"])).strip(" ._")
+                    new_sub = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(c_name)).strip(" ._")
+                    old_folder = storage_root / old_sub
+                    new_folder = storage_root / new_sub
+                    if old_folder.is_dir() and not new_folder.exists():
+                        old_folder.rename(new_folder)
+                        with archiver.db._lock, archiver.db._conn:
+                            cur = archiver.db._conn.cursor()
+                            cur.execute(
+                                """
+                                UPDATE media_files
+                                SET vault_rel_path = REPLACE(vault_rel_path, ?, ?)
+                                WHERE chat_id = ?;
+                                """,
+                                (str(old_folder), str(new_folder), c_id),
+                            )
+                except (OSError, sqlite3.Error):
+                    pass
 
             archiver.db.upsert_chat(
                 chat_id=c_id,
