@@ -1038,3 +1038,145 @@ def test_codeql_path_injection_security(tmp_path: Path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_frontend_js_syntax_and_dom_ids_integrity():
+    """Verify app.js has balanced braces/parens/strings and all getElementById targets exist in index.html."""
+    import re
+
+    repo_root = Path(__file__).resolve().parent.parent
+    app_js = (repo_root / "line_vault" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (repo_root / "line_vault" / "static" / "index.html").read_text(encoding="utf-8")
+    styles_css = (repo_root / "line_vault" / "static" / "styles.css").read_text(encoding="utf-8")
+
+    # 1. Verify every static document.getElementById("...") in app.js exists in index.html
+    html_ids = set(re.findall(r'id="([^"]+)"', index_html))
+    js_ids = set(re.findall(r'document\.getElementById\("([^"]+)"\)', app_js))
+    missing_ids = js_ids - html_ids
+    assert not missing_ids, f"DOM IDs referenced in app.js but missing in index.html: {missing_ids}"
+
+    # 2. Verify brace/paren/bracket balance and ensure DOMContentLoaded scope never closes early
+    lines = app_js.splitlines()
+    brace_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
+    in_block_comment = False
+    in_single = False
+    in_double = False
+    template_stack: list[int] = []  # tracks brace_depth when entering ${...} inside backticks
+    in_template_text = False
+    opened_root = False
+
+    for line_no, line in enumerate(lines, start=1):
+        i = 0
+        n = len(line)
+        while i < n:
+            ch = line[i]
+            nxt = line[i + 1] if i + 1 < n else ""
+
+            if in_block_comment:
+                if ch == "*" and nxt == "/":
+                    in_block_comment = False
+                    i += 2
+                    continue
+                i += 1
+                continue
+
+            if in_single:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == "'":
+                    in_single = False
+                i += 1
+                continue
+
+            if in_double:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == '"':
+                    in_double = False
+                i += 1
+                continue
+
+            if in_template_text:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == "$" and nxt == "{":
+                    template_stack.append(brace_depth)
+                    brace_depth += 1
+                    in_template_text = False
+                    i += 2
+                    continue
+                if ch == "`":
+                    in_template_text = False
+                i += 1
+                continue
+
+            # Normal code state
+            if ch == "/" and nxt == "/":
+                break
+            if ch == "/" and nxt == "*":
+                in_block_comment = True
+                i += 2
+                continue
+            # Skip regex literal (/.../) on replace(/ or match(/ lines
+            if ch == "/" and "new RegExp" not in line and ("replace(/" in line or "match(/" in line):
+                # advance to closing /
+                i += 1
+                while i < n:
+                    if line[i] == "\\":
+                        i += 2
+                        continue
+                    if line[i] == "/":
+                        break
+                    i += 1
+                i += 1
+                continue
+
+            if ch == "'":
+                in_single = True
+            elif ch == '"':
+                in_double = True
+            elif ch == "`":
+                in_template_text = True
+            elif ch == "{":
+                brace_depth += 1
+                if brace_depth == 1:
+                    opened_root = True
+            elif ch == "}":
+                brace_depth -= 1
+                assert brace_depth >= 0, f"Unexpected extra '}}' at app.js:{line_no}"
+                if template_stack and brace_depth == template_stack[-1]:
+                    template_stack.pop()
+                    in_template_text = True
+                if opened_root and line_no < len(lines):
+                    assert brace_depth >= 1, (
+                        f"Root DOMContentLoaded block closed prematurely at app.js:{line_no}"
+                    )
+            elif ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth -= 1
+                assert paren_depth >= 0, f"Unexpected extra ')' at app.js:{line_no}"
+            elif ch == "[":
+                bracket_depth += 1
+            elif ch == "]":
+                bracket_depth -= 1
+                assert bracket_depth >= 0, f"Unexpected extra ']' at app.js:{line_no}"
+
+            i += 1
+
+    assert brace_depth == 0, f"Unclosed '{{' in app.js (remaining depth={brace_depth})"
+    assert paren_depth == 0, f"Unclosed '(' in app.js (remaining depth={paren_depth})"
+    assert bracket_depth == 0, f"Unclosed '[' in app.js (remaining depth={bracket_depth})"
+    assert not in_template_text and not template_stack, "Unclosed template literal in app.js"
+
+    # 3. Verify anti-extension CSS & responsive header rules exist in styles.css
+    assert "--disable-extensions" in (repo_root / "line_vault" / "cli.py").read_text(encoding="utf-8")
+    assert "--user-data-dir=" in (repo_root / "line_vault" / "cli.py").read_text(encoding="utf-8")
+    assert "flex-wrap: wrap" in styles_css
+    assert "not(.app-header)" in styles_css
+

@@ -22,6 +22,8 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 Write-Host "==> Building Windows 11 Standalone GUI Executable (LINE-Vault-win64.exe)"
+Get-Process -Name "LINE-Vault-win64" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
 & $pythonExe -m PyInstaller `
     --noconfirm `
     --clean `

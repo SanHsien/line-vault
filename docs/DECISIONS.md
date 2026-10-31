@@ -78,6 +78,20 @@
 
 ---
 
+## ADR-007: 瀏覽器設定檔隔離（阻絕第三方擴充套件廣告注入）與前端 JS 語法機械驗證防線
+
+- **狀態**：已採用 (Accepted)
+- **背景（實機教訓）**：
+  1. 初版 `cli.py` 呼叫 `msedge.exe --app=http://127.0.0.1:8765` 時未指定獨立 `--user-data-dir` 與 `--disable-extensions`，導致 Chromium 直接沿用使用者預設瀏覽器設定檔並載入第三方閱讀外掛（「AI 速讀」），在視窗左下角注入外掛推廣白框。
+  2. 初版 `app.js` 在 `renderInsight()` 結尾多出一個 `}`，導致 `DOMContentLoaded` 區塊提前閉合並觸發瀏覽器 `SyntaxError`，造成左側清單卡在「載入中...」且所有 UI 按鈕點擊無效；而當時 `pytest` 僅以字串比對檢查 `/app.js`，未驗證 JS 括號結構與執行期 DOM 渲染。
+  3. 頂部 `.app-header` 未設定 `flex-wrap: wrap`，在非最大化視窗（1280px）下最右側按鈕遭裁切。
+- **決策**：
+  1. `cli.py` 啟動桌面視窗時強制指定隔離設定檔 `--user-data-dir=<vault_dir>/.gui_profile` 並加上 `--disable-extensions`、`--disable-component-extensions-with-background-pages`、`--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2`，搭配 CSS 與 `MutationObserver` 雙重屏蔽非原生容器節點，徹底杜絕任何第三方擴充套件注入。
+  2. `.app-header` 改為 `flex-wrap: wrap` 自適應排版與橫向膠囊 KPI 卡片，並內建「❓ 使用說明」視窗與中央「🚀 3 步快速開始與測試指南」互動面板。
+  3. 在 `tests/test_line_vault.py` 新增 `test_frontend_js_syntax_and_dom_ids_integrity` 機械防線，逐行檢查 `app.js` 括號／字串／模板語法平衡、防止根區塊提前閉合，並強制驗證所有 `document.getElementById` 與 `index.html` 100% 對齊。
+
+---
+
 ## 相關文件
 
 - [全域協作與代理規則 (AGENTS.md)](../AGENTS.md)

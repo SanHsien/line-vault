@@ -51,6 +51,38 @@ def find_system_app_browser() -> str | None:
     return None
 
 
+def _cleanup_stale_instance_on_port(host: str, port: int) -> None:
+    """If an older background LINE-Vault-win64.exe is holding the port, terminate it cleanly."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.3)
+        if sock.connect_ex((host, port)) != 0:
+            return
+
+    # Port is currently occupied; if running on Windows, terminate stale LINE-Vault-win64.exe processes
+    if os.name == "nt":
+        current_pid = os.getpid()
+        try:
+            subprocess.run(
+                [
+                    "taskkill",
+                    "/F",
+                    "/FI",
+                    f"PID ne {current_pid}",
+                    "/IM",
+                    "LINE-Vault-win64.exe",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+            time.sleep(0.3)
+        except (OSError, subprocess.SubprocessError):
+            return
+
+
 def launch_gui(
     vault_dir: Path | str = "vault_data",
     host: str = "127.0.0.1",
@@ -61,10 +93,13 @@ def launch_gui(
     v_dir = Path(vault_dir).resolve()
     v_dir.mkdir(parents=True, exist_ok=True)
 
+    if not no_window:
+        _cleanup_stale_instance_on_port(host, port)
+
     try:
         server = create_server(vault_dir=v_dir, host=host, port=port)
     except OSError:
-        # Port already in use; bind to any available ephemeral port
+        # Port still in use by another application; bind to any available ephemeral port
         server = create_server(vault_dir=v_dir, host=host, port=0)
 
     actual_port = server.server_port
@@ -76,27 +111,47 @@ def launch_gui(
     # Allow server to bind and start listening
     time.sleep(0.15)
 
+    app_proc: subprocess.Popen | None = None
     if not no_window:
         browser_exe = find_system_app_browser()
         if browser_exe:
-            # Launch in standalone application window mode (removes address bar and tabs).
-            # Note: Do not shut down server on proc.wait() because Edge/Chrome hands off
-            # to an existing browser process and exits the launcher stub immediately.
+            # Dedicated clean profile directory ensures:
+            # 1. Zero third-party browser extensions / ad injections ("AI 速讀" etc.)
+            # 2. Standalone window mode (--app) is always honored even when Edge/Chrome is already open
+            profile_dir = v_dir / ".gui_profile"
+            profile_dir.mkdir(parents=True, exist_ok=True)
             app_args = [
                 browser_exe,
                 f"--app={app_url}",
-                "--window-size=1280,820",
+                f"--user-data-dir={profile_dir}",
+                "--disable-extensions",
+                "--disable-component-extensions-with-background-pages",
+                "--disable-sync",
+                "--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2,msHubApps,msEdgeCollections",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--window-size=1440,900",
             ]
             try:
-                subprocess.Popen(app_args)
+                app_proc = subprocess.Popen(app_args)
             except (OSError, subprocess.SubprocessError):
                 webbrowser.open(app_url)
         else:
             webbrowser.open(app_url)
 
     try:
+        start_ts = time.time()
+        proc_owned = False
         while srv_thread.is_alive():
-            time.sleep(1.0)
+            if app_proc is not None:
+                ret = app_proc.poll()
+                elapsed = time.time() - start_ts
+                if ret is None and elapsed > 2.5:
+                    # Browser stayed alive in our isolated profile; when it closes, stop server
+                    proc_owned = True
+                elif ret is not None and proc_owned:
+                    break
+            time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:

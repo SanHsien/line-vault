@@ -43,6 +43,9 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btnOpenHelp" class="btn btn-outline" title="查看快速開始與測試指南">
+          <span class="btn-icon">❓</span> <span id="txtBtnHelp">使用說明</span>
+        </button>
         <button id="btnLangToggle" class="btn btn-outline" title="切換語言 / Switch Language">
           <span class="btn-icon">🌐</span> <span id="langToggleLabel">English</span>
         </button>
@@ -52,7 +55,7 @@
         <button id="btnAnalyzeAll" class="btn btn-primary" title="重新分析所有已監控聊天室">
           <span class="btn-icon">⚡</span> <span id="txtBtnAnalyzeAll">重新分析全部</span>
         </button>
-        <button id="btnSeedDemo" class="btn btn-outline" title="載入真實範例對話、相片、影片與合約檔案">
+        <button id="btnSeedDemo" class="btn btn-accent" title="一鍵載入範例對話、相片、影片與合約檔案以立即測試">
           <span class="btn-icon">✨</span> <span id="txtBtnSeedDemo">載入範例資料</span>
         </button>
       </div>
@@ -256,6 +259,58 @@
             <span class="toggle-slider"></span>
             <span class="toggle-text">⏱️ 背景自動巡檢與防過期備份（每 5 分鐘自動巡檢並刷新分析）</span>
           </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick-Start Help & Testing Guide Modal -->
+  <div id="helpModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="helpModalTitle">📖 LINE Vault 快速開始與功能測試指南</h3>
+        <button id="btnCloseHelp" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="onboarding-steps">
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 1</div>
+            <div class="step-content">
+              <h4>✨ 一鍵載入範例資料（最快體驗完整功能）</h4>
+              <p>首次測試無須準備任何檔案！點擊下方或右上角「<b>✨ 載入範例資料</b>」，系統將立即建立 4 個擬真聊天室（含加密相片、MP4 影片、PDF 合約、ZIP 附件），並自動完成本地解密歸檔與 AI 智慧分析。</p>
+              <button id="btnHelpSeedDemo" class="btn btn-accent btn-sm" style="margin-top:8px;">
+                <span>✨ 立即載入範例資料並開始測試</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 2</div>
+            <div class="step-content">
+              <h4>🔄 匯入您真實的 Windows 11 LINE 資料（3 種方式任選）</h4>
+              <p>點擊頂部「<b>⚙️ 金庫與同步設定</b>」可隨時執行：</p>
+              <ul class="help-list">
+                <li><b>🔄 掃描本機 LINE 快取資料夾</b>：自動掃描 <code>%LOCALAPPDATA%\LINE\Data</code>，透過 Magic Bytes 自動辨識並解密還原相片、影片與文件，永久防過期保存。</li>
+                <li><b>📄 匯入 LINE 文字對話紀錄 (.txt)</b>：將 LINE 匯出的 <code>.txt</code> 聊天備份直接選檔匯入，立即轉為可搜尋對話並產生 AI 摘要。</li>
+                <li><b>🔐 同步 LINE 加密資料庫 (MCP)</b>：搭配 <code>line-desktop-mcp</code> 引擎同步本機對話紀錄。</li>
+              </ul>
+              <button id="btnHelpOpenSettings" class="btn btn-secondary btn-sm" style="margin-top:8px;">
+                <span>⚙️ 開啟金庫與同步設定</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 3</div>
+            <div class="step-content">
+              <h4>🛡️ 體驗防過期媒體庫、訊息收藏與 AI 待辦追蹤</h4>
+              <ul class="help-list">
+                <li><b>切換五大分頁</b>：在中央面板上方切換「💬 對話紀錄」、「⭐ 收藏訊息」、「🖼️ 相片牆」、「🎬 影片庫」、「📁 檔案櫃」。</li>
+                <li><b>收藏與全域搜尋</b>：點擊對話氣泡旁的「☆」加入收藏；在頂部搜尋框輸入關鍵字（如「合約」、「報價」）體驗 FTS5 毫秒級跨聊天室檢索。</li>
+                <li><b>AI 待辦勾選與報告匯出</b>：在右側面板直接勾選「✅ 自動提取待辦」，或點擊「📋 複製回覆」、「📥 匯出報告」下載 Markdown 總結報告。</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>

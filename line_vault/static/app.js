@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
       kpiMonitored: "監控聊天室",
       kpiArchived: "永久保存媒體",
       kpiAction: "待辦追蹤",
+      btnHelp: "使用說明",
       btnSettings: "金庫與同步設定",
       btnAnalyzeAll: "重新分析全部",
       btnSeedDemo: "載入範例資料",
@@ -53,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
       kpiMonitored: "Monitored Chats",
       kpiArchived: "Vaulted Media",
       kpiAction: "Action Items",
+      btnHelp: "Quick Guide",
       btnSettings: "Settings & Sync",
       btnAnalyzeAll: "Re-analyze All",
       btnSeedDemo: "Load Demo Data",
@@ -108,6 +110,13 @@ document.addEventListener("DOMContentLoaded", () => {
   let chatsCache = [];
 
   // DOM Elements
+  const btnOpenHelp = document.getElementById("btnOpenHelp");
+  const txtBtnHelp = document.getElementById("txtBtnHelp");
+  const helpModal = document.getElementById("helpModal");
+  const btnCloseHelp = document.getElementById("btnCloseHelp");
+  const btnHelpSeedDemo = document.getElementById("btnHelpSeedDemo");
+  const btnHelpOpenSettings = document.getElementById("btnHelpOpenSettings");
+
   const btnLangToggle = document.getElementById("btnLangToggle");
   const langToggleLabel = document.getElementById("langToggleLabel");
   const i18nSubtitle = document.getElementById("i18nSubtitle");
@@ -129,7 +138,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const kpiActionItems = document.getElementById("kpiActionItems");
   const globalSearchInput = document.getElementById("globalSearchInput");
   const globalSearchClear = document.getElementById("globalSearchClear");
-  const btnScanLine = document.getElementById("btnScanLine");
   const btnAnalyzeAll = document.getElementById("btnAnalyzeAll");
   const btnSeedDemo = document.getElementById("btnSeedDemo");
   const btnRefreshAnalysis = document.getElementById("btnRefreshAnalysis");
@@ -184,6 +192,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateLanguageUI() {
     if (langToggleLabel) langToggleLabel.textContent = t("langLabel");
     if (i18nSubtitle) i18nSubtitle.textContent = t("subtitle");
+    if (txtBtnHelp) txtBtnHelp.textContent = t("btnHelp");
     if (txtBtnSettings) txtBtnSettings.textContent = t("btnSettings");
     if (txtBtnAnalyzeAll) txtBtnAnalyzeAll.textContent = t("btnAnalyzeAll");
     if (txtBtnSeedDemo) txtBtnSeedDemo.textContent = t("btnSeedDemo");
@@ -313,10 +322,16 @@ document.addEventListener("DOMContentLoaded", () => {
       chatListContainer.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">💬</div>
-          <h3>無相符聊天室</h3>
-          <p>點選右上角「載入範例資料」即可建立測試資料。</p>
+          <h3>尚無聊天室資料</h3>
+          <p>點擊下方按鈕即可 1 秒建立完整測試對話、加密相片、影片與 PDF 合約。</p>
+          <button class="btn btn-accent btn-sm js-seed-demo-trigger" style="margin-top:12px;">
+            <span>✨ 立即載入範例資料</span>
+          </button>
         </div>
       `;
+      chatListContainer.querySelectorAll(".js-seed-demo-trigger").forEach(btn => {
+        btn.addEventListener("click", () => triggerSeedDemo());
+      });
       return;
     }
 
@@ -383,15 +398,58 @@ document.addEventListener("DOMContentLoaded", () => {
     loadChatInsight(chat.chat_id);
   }
 
+  function renderOnboardingGuide() {
+    centerContent.innerHTML = `
+      <div class="onboarding-card">
+        <div class="onboarding-header">
+          <span class="onboarding-header-icon">🚀</span>
+          <div>
+            <h3>歡迎使用 LINE Vault — 3 步快速開始與測試指南</h3>
+            <p>100% 本地端離線運作 • 防過期媒體永久保存 • AI 重點與待辦提取</p>
+          </div>
+        </div>
+        <div class="onboarding-steps">
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 1</div>
+            <div class="step-content">
+              <h4>✨ 一鍵載入測試範例資料（推薦！1 秒立即體驗）</h4>
+              <p>首次測試無須準備任何檔案！點擊下方按鈕即可自動建立 4 個擬真聊天室（含客戶交付群、加密 PNG 相片、MP4 影片、PDF 合約與 AI 分析），並自動選取第一個聊天室開始體驗。</p>
+              <button class="btn btn-accent btn-sm js-seed-demo-trigger" style="margin-top:8px;">
+                <span>✨ 立即載入範例資料並開始測試</span>
+              </button>
+            </div>
+          </div>
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 2</div>
+            <div class="step-content">
+              <h4>🔄 匯入您真實的 Windows 11 LINE 資料</h4>
+              <p>支援「掃描本機 LINE 快取資料夾 (自動解密還原相片/影片)」、「匯入 LINE .txt 聊天紀錄備份」或「MCP 同步加密資料庫」。</p>
+              <button class="btn btn-secondary btn-sm js-open-settings-trigger" style="margin-top:8px;">
+                <span>⚙️ 開啟金庫與同步設定</span>
+              </button>
+            </div>
+          </div>
+          <div class="onboarding-step">
+            <div class="step-badge">步驟 3</div>
+            <div class="step-content">
+              <h4>🛡️ 體驗防過期媒體庫、☆ 訊息收藏與 ✅ 待辦勾選</h4>
+              <p>選取左側聊天室後，可切換上方「💬 對話紀錄 / ⭐ 收藏訊息 / 🖼️ 相片牆 / 🎬 影片庫 / 📁 檔案櫃」，在右側勾選待辦事項或點擊「📥 匯出報告」。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    centerContent.querySelectorAll(".js-seed-demo-trigger").forEach(btn => {
+      btn.addEventListener("click", () => triggerSeedDemo());
+    });
+    centerContent.querySelectorAll(".js-open-settings-trigger").forEach(btn => {
+      btn.addEventListener("click", () => openSettingsModal());
+    });
+  }
+
   async function loadCenterContent() {
     if (!currentChatId && !globalSearchQuery && activeTab !== "bookmarks") {
-      centerContent.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-icon">📁</div>
-          <h3>${t("noChatSelected")}</h3>
-          <p>${t("noChatSelectedSub")}</p>
-        </div>
-      `;
+      renderOnboardingGuide();
       return;
     }
 
@@ -747,7 +805,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   }
-  }
 
   function getCategoryLabel(cat) {
     switch (cat) {
@@ -851,50 +908,16 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCenterContent();
   });
 
-  // 7. Scan Local LINE Button
-  if (btnScanLine) {
-    btnScanLine.addEventListener("click", async () => {
-      btnScanLine.disabled = true;
-      btnScanLine.innerHTML = "<span>⏳</span> 掃描中...";
-      try {
-        const res = await fetch("/api/scan-line", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          const sr = data.scan_result || {};
-          showToast(
-            `本機 LINE 掃描完成：檢查 ${sr.files_inspected || 0} 檔、歸檔 ${sr.media_imported || 0} 件媒體！`,
-            "🔄"
-          );
-          await fetchStatus();
-          await fetchChats();
-          if (chatsCache.length > 0 && !currentChatId) {
-            selectChat(chatsCache[0]);
-          } else if (currentChatId) {
-            loadCenterContent();
-          }
-        } else {
-          showToast(data.error || "找不到本機 LINE 資料夾，可先載入範例資料體驗", "⚠️");
-        }
-      } catch (err) {
-        showToast("掃描出錯: " + err.message, "❌");
-      } finally {
-        btnScanLine.disabled = false;
-        btnScanLine.innerHTML = '<span class="btn-icon">🔄</span> 掃描本機 LINE';
-      }
-    });
-  }
-
-  // 7b. Seed Demo Data Button
-  btnSeedDemo.addEventListener("click", async () => {
-    btnSeedDemo.disabled = true;
-    btnSeedDemo.innerHTML = "<span>⏳</span> 載入中...";
+  // 7. Seed Demo Data Helper & Button
+  async function triggerSeedDemo() {
+    if (btnSeedDemo) {
+      btnSeedDemo.disabled = true;
+      btnSeedDemo.innerHTML = "<span>⏳</span> 載入中...";
+    }
     try {
       const res = await fetch("/api/demo/seed", { method: "POST" });
       if (res.ok) {
+        if (helpModal) helpModal.style.display = "none";
         showToast("真實範例對話、相片、影片與合約已成功建立！", "✨");
         await fetchStatus();
         await fetchChats();
@@ -907,10 +930,16 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       showToast("載入出錯: " + err.message, "❌");
     } finally {
-      btnSeedDemo.disabled = false;
-      btnSeedDemo.innerHTML = '<span class="btn-icon">✨</span> 載入範例資料';
+      if (btnSeedDemo) {
+        btnSeedDemo.disabled = false;
+        btnSeedDemo.innerHTML = `<span class="btn-icon">✨</span> <span id="txtBtnSeedDemo">${t("btnSeedDemo")}</span>`;
+      }
     }
-  });
+  }
+
+  if (btnSeedDemo) {
+    btnSeedDemo.addEventListener("click", () => triggerSeedDemo());
+  }
 
   // 8. Analyze All Button
   btnAnalyzeAll.addEventListener("click", async () => {
@@ -959,33 +988,35 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 10. Settings & Sync Modal Handlers
-  if (btnOpenSettings && settingsModal) {
-    btnOpenSettings.addEventListener("click", async () => {
-      settingsModal.style.display = "flex";
-      // Fill stored preferences
-      inputLineDataDir.value = localStorage.getItem("line_vault_line_data_dir") || "";
-      inputReaderScript.value = localStorage.getItem("line_vault_reader_script") || "";
-      inputSyncDays.value = localStorage.getItem("line_vault_sync_days") || "14";
-      inputTargetChatName.value = localStorage.getItem("line_vault_target_chat") || "";
-      toggleAutoPoll.checked = localStorage.getItem("line_vault_auto_poll") === "true";
+  // 10. Settings & Sync Modal + Help Modal Handlers
+  async function openSettingsModal() {
+    if (!settingsModal) return;
+    if (helpModal) helpModal.style.display = "none";
+    settingsModal.style.display = "flex";
+    inputLineDataDir.value = localStorage.getItem("line_vault_line_data_dir") || "";
+    inputReaderScript.value = localStorage.getItem("line_vault_reader_script") || "";
+    inputSyncDays.value = localStorage.getItem("line_vault_sync_days") || "14";
+    inputTargetChatName.value = localStorage.getItem("line_vault_target_chat") || "";
+    toggleAutoPoll.checked = localStorage.getItem("line_vault_auto_poll") === "true";
 
-      // Refresh status info
-      try {
-        const res = await fetch("/api/status");
-        if (res.ok) {
-          const data = await res.json();
-          settingsVaultDir.textContent = data.vault_dir || "vault_data";
-          settingsFts5.textContent = data.fts5_enabled ? "已啟用 (毫秒級搜尋)" : "未支援 (使用 LIKE 模式)";
-          settingsLineStatus.textContent = data.line_detected ? "已偵測到本機 LINE" : "未偵測到 (可手動指定路徑)";
-          if (!inputLineDataDir.value && data.line_path) {
-            inputLineDataDir.value = data.line_path;
-          }
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const data = await res.json();
+        settingsVaultDir.textContent = data.vault_dir || "vault_data";
+        settingsFts5.textContent = data.fts5_enabled ? "已啟用 (毫秒級搜尋)" : "未支援 (使用 LIKE 模式)";
+        settingsLineStatus.textContent = data.line_detected ? "已偵測到本機 LINE" : "未偵測到 (可手動指定路徑)";
+        if (!inputLineDataDir.value && data.line_path) {
+          inputLineDataDir.value = data.line_path;
         }
-      } catch (e) {
-        settingsVaultDir.textContent = "無法取得狀態";
       }
-    });
+    } catch (e) {
+      settingsVaultDir.textContent = "無法取得狀態";
+    }
+  }
+
+  if (btnOpenSettings && settingsModal) {
+    btnOpenSettings.addEventListener("click", () => openSettingsModal());
 
     btnCloseSettings.addEventListener("click", () => {
       settingsModal.style.display = "none";
@@ -996,6 +1027,28 @@ document.addEventListener("DOMContentLoaded", () => {
         settingsModal.style.display = "none";
       }
     });
+  }
+
+  if (btnOpenHelp && helpModal) {
+    btnOpenHelp.addEventListener("click", () => {
+      helpModal.style.display = "flex";
+    });
+    if (btnCloseHelp) {
+      btnCloseHelp.addEventListener("click", () => {
+        helpModal.style.display = "none";
+      });
+    }
+    helpModal.addEventListener("click", (e) => {
+      if (e.target === helpModal) {
+        helpModal.style.display = "none";
+      }
+    });
+    if (btnHelpSeedDemo) {
+      btnHelpSeedDemo.addEventListener("click", () => triggerSeedDemo());
+    }
+    if (btnHelpOpenSettings) {
+      btnHelpOpenSettings.addEventListener("click", () => openSettingsModal());
+    }
   }
 
   // Sync MCP Button in Modal
@@ -1270,8 +1323,25 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Purge any third-party browser extension DOM nodes appended to body
+  function purgeInjectedExtensionNodes() {
+    const allowedIds = new Set(["settingsModal", "helpModal", "toastContainer"]);
+    Array.from(document.body.children).forEach((el) => {
+      if (el.tagName === "SCRIPT") return;
+      if (el.classList.contains("app-header") || el.classList.contains("main-layout")) return;
+      if (allowedIds.has(el.id)) return;
+      el.remove();
+    });
+  }
+  purgeInjectedExtensionNodes();
+  if (typeof MutationObserver !== "undefined") {
+    const extObserver = new MutationObserver(() => purgeInjectedExtensionNodes());
+    extObserver.observe(document.body, { childList: true });
+  }
+
   // Initial Load
   updateLanguageUI();
+  loadCenterContent();
   fetchStatus();
   fetchChats().then(() => {
     // Automatically select the first chat if available
