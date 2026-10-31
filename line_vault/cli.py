@@ -17,6 +17,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+from line_vault import get_default_vault_dir
 from line_vault.server import create_server
 
 
@@ -84,13 +85,13 @@ def _cleanup_stale_instance_on_port(host: str, port: int) -> None:
 
 
 def launch_gui(
-    vault_dir: Path | str = "vault_data",
+    vault_dir: Path | str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     no_window: bool = False,
 ) -> int:
     """Launch LINE Vault local engine and open the standalone native app window."""
-    v_dir = Path(vault_dir).resolve()
+    v_dir = Path(vault_dir).resolve() if vault_dir is not None else get_default_vault_dir()
     v_dir.mkdir(parents=True, exist_ok=True)
 
     if not no_window:
@@ -169,8 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--vault-dir",
-        default="vault_data",
-        help="金庫資料儲存目錄 (預設: vault_data)",
+        default=None,
+        help="金庫資料儲存目錄 (預設: <程式所在資料夾>\\line-vault)",
     )
     parser.add_argument(
         "--port",

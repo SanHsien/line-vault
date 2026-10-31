@@ -1321,7 +1321,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/status");
       if (res.ok) {
         const data = await res.json();
-        settingsVaultDir.textContent = data.vault_dir || "vault_data";
+        settingsVaultDir.textContent = data.vault_dir || "line-vault";
         settingsFts5.textContent = data.fts5_enabled ? "已啟用 (毫秒級搜尋)" : "未支援 (使用 LIKE 模式)";
         settingsLineStatus.textContent = data.line_detected ? "已偵測到本機 LINE" : "未偵測到 (可手動指定路徑)";
         if (!inputLineDataDir.value && data.line_path) {

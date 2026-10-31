@@ -1,5 +1,8 @@
 """LINE Vault - Windows 11 本地對話與防過期媒體管理中心."""
 
+import sys
+from pathlib import Path
+
 from line_vault.analyzer import ChatAnalyzer
 from line_vault.archiver import MediaArchiver
 from line_vault.crypto import (
@@ -10,13 +13,27 @@ from line_vault.crypto import (
 )
 from line_vault.db import VaultDB
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 APP_NAME = "LINE Vault — 本地對話與防過期媒體中心"
 APP_VERSION = __version__
 APP_AUTHOR = "SanHsien"
 GITHUB_REPO = "SanHsien/line-vault"
 GITHUB_REPO_URL = "https://github.com/SanHsien/line-vault"
 GITHUB_RELEASES_URL = "https://github.com/SanHsien/line-vault/releases"
+
+
+def get_default_vault_dir() -> Path:
+    """Resolve default vault directory `<app_dir>/line-vault`.
+
+    When compiled as a standalone binary (PyInstaller/sys.frozen), app_dir is sys.executable.parent.
+    Otherwise, app_dir is current working directory.
+    """
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+    else:
+        app_dir = Path.cwd().resolve()
+    return (app_dir / "line-vault").resolve()
+
 
 __all__ = [
     "__version__",
@@ -26,6 +43,7 @@ __all__ = [
     "GITHUB_REPO",
     "GITHUB_REPO_URL",
     "GITHUB_RELEASES_URL",
+    "get_default_vault_dir",
     "VaultDB",
     "MediaArchiver",
     "ChatAnalyzer",

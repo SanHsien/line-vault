@@ -21,6 +21,7 @@ from line_vault import (
     GITHUB_RELEASES_URL,
     GITHUB_REPO,
     GITHUB_REPO_URL,
+    get_default_vault_dir,
 )
 from line_vault.analyzer import ChatAnalyzer
 from line_vault.archiver import MediaArchiver
@@ -745,14 +746,17 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
 
 def create_server(
-    vault_dir: Path | str = "vault_data",
+    vault_dir: Path | str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     allowed_scan_root: Path | str | None = None,
     enable_auto_updater: bool = False,
 ) -> ThreadingHTTPServer:
     """Create configured ThreadingHTTPServer instance."""
-    v_dir = Path(vault_dir).resolve()
+    if vault_dir is None or str(vault_dir) == "vault_data":
+        v_dir = get_default_vault_dir()
+    else:
+        v_dir = Path(vault_dir).resolve()
     v_dir.mkdir(parents=True, exist_ok=True)
 
     scan_root = Path(allowed_scan_root).resolve() if allowed_scan_root else v_dir.parent.resolve()
@@ -788,15 +792,16 @@ def create_server(
 
 
 def run_server(
-    vault_dir: Path | str = "vault_data",
+    vault_dir: Path | str | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = False,
     allowed_scan_root: Path | str | None = None,
 ) -> None:
     """Run the LINE Vault HTTP server until interrupted."""
+    effective_vault = get_default_vault_dir() if (vault_dir is None or str(vault_dir) == "vault_data") else Path(vault_dir).resolve()
     server = create_server(
-        vault_dir=vault_dir,
+        vault_dir=effective_vault,
         host=host,
         port=port,
         allowed_scan_root=allowed_scan_root,
@@ -804,7 +809,7 @@ def run_server(
     )
     url = f"http://{host}:{port}"
     print(f"[*] LINE Vault server started at {url}")
-    print(f"[*] Vault directory: {Path(vault_dir).resolve()}")
+    print(f"[*] Vault directory: {effective_vault}")
 
     if open_browser:
         try:

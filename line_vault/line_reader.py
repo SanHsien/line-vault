@@ -754,6 +754,8 @@ class BuiltinLineReader:
                 ).fetchall()
 
             messages_batch: list[dict] = []
+            pending_stickers: list[tuple] = []
+            pending_cache: list[tuple] = []
 
             for mid, sender_mid, created_ms, text_val, ctype_int, meta_raw, info_raw in reversed(msg_rows):
                 msg_id = f"line_{c_id[-8:]}_{mid}"
@@ -812,17 +814,7 @@ class BuiltinLineReader:
                     initial_status = "none"
 
                     if stk_id and auto_stickers:
-                        stk_res = archiver.download_and_archive_sticker(
-                            chat_id=c_id,
-                            message_id=msg_id,
-                            stk_id=stk_id,
-                            stk_pkg_id=stk_pkg_id,
-                            stk_ver=stk_ver,
-                            chat_name=c_name,
-                        )
-                        if stk_res.get("status") == "archived":
-                            media_archived += 1
-                            initial_status = "archived"
+                        pending_stickers.append((c_id, msg_id, stk_id, stk_pkg_id, stk_ver, c_name))
 
                     messages_batch.append({
                         "message_id": msg_id,
@@ -862,21 +854,45 @@ class BuiltinLineReader:
                 })
 
                 if can_download and key_material and (declared_bytes or thumb_path):
-                    scan_res = archiver.scan_and_archive_line_cache(
-                        chat_id=c_id,
-                        message_id=msg_id,
-                        cache_root=cache_root,
-                        material_b64=str(key_material),
-                        declared_bytes=declared_bytes,
-                        fallback_filename=file_name,
-                        thumb_path=str(thumb_path) if thumb_path else None,
-                    )
-                    if scan_res.get("status") == "archived":
-                        media_archived += 1
+                    pending_cache.append((c_id, msg_id, key_material, declared_bytes, file_name, thumb_path))
 
+            # 1. First insert all messages into SQLite to satisfy FOREIGN KEY constraint
             if messages_batch:
                 archiver.db.upsert_messages_batch(messages_batch)
                 messages_synced += len(messages_batch)
+
+            # 2. Safely download and archive stickers (foreign key is now guaranteed to exist)
+            for s_cid, s_mid, s_id, s_pkg, s_ver, s_cname in pending_stickers:
+                try:
+                    stk_res = archiver.download_and_archive_sticker(
+                        chat_id=s_cid,
+                        message_id=s_mid,
+                        stk_id=s_id,
+                        stk_pkg_id=s_pkg,
+                        stk_ver=s_ver,
+                        chat_name=s_cname,
+                    )
+                    if stk_res.get("status") == "archived":
+                        media_archived += 1
+                except (OSError, ValueError, sqlite3.Error):
+                    continue
+
+            # 3. Safely scan and link cached media
+            for c_cid, c_mid, c_mat, c_bytes, c_fn, c_th in pending_cache:
+                try:
+                    scan_res = archiver.scan_and_archive_line_cache(
+                        chat_id=c_cid,
+                        message_id=c_mid,
+                        cache_root=cache_root,
+                        material_b64=str(c_mat),
+                        declared_bytes=c_bytes,
+                        fallback_filename=c_fn,
+                        thumb_path=str(c_th) if c_th else None,
+                    )
+                    if scan_res.get("status") == "archived":
+                        media_archived += 1
+                except (OSError, ValueError, sqlite3.Error):
+                    continue
 
             if days > 0 and chats_synced >= 35 and not (chat_name_filter and chat_name_filter.strip()):
                 break

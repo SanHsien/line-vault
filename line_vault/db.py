@@ -3,15 +3,28 @@
 import datetime
 import json
 import sqlite3
+import sys
 import threading
 from pathlib import Path
+
+
+def _get_default_db_path() -> Path:
+    """Return default vault db path: <app_dir>/line-vault/vault.db."""
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+    else:
+        app_dir = Path.cwd().resolve()
+    return app_dir / "line-vault" / "vault.db"
 
 
 class VaultDB:
     """Manages chats, messages, media registry, FTS5 index, and AI insights."""
 
-    def __init__(self, db_path: Path | str = "vault_data/vault.db"):
-        self.db_path = Path(db_path).resolve()
+    def __init__(self, db_path: Path | str | None = None):
+        if db_path is None or str(db_path) == "vault_data/vault.db":
+            self.db_path = _get_default_db_path()
+        else:
+            self.db_path = Path(db_path).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(

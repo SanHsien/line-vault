@@ -18,6 +18,7 @@ env/
 
 # LINE Vault local runtime data & secrets (NEVER COMMIT REAL DATA)
 vault_data/
+line-vault/
 *.edb
 *.edb-wal
 *.edb-shm
