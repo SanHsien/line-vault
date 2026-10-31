@@ -4,7 +4,10 @@ import json
 import os
 import platform
 import re
+import sqlite3
+import subprocess
 import sys
+import threading
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -32,6 +35,63 @@ def _parse_semver(ver_str: str) -> tuple[int, int, int]:
     while len(nums) < 3:
         nums.append(0)
     return (nums[0], nums[1], nums[2])
+
+
+class VaultAutoUpdater:
+    """Background daemon thread for periodically syncing LINE databases and updating AI insights."""
+
+    def __init__(self, db: VaultDB, archiver: MediaArchiver, analyzer: ChatAnalyzer):
+        self.db = db
+        self.archiver = archiver
+        self.analyzer = analyzer
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Start the background daemon updater thread."""
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="VaultAutoUpdater")
+        self._thread.start()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        """Signal the updater thread to stop and wait for termination."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
+    def _run(self) -> None:
+        """Periodic loop running auto-sync and analysis."""
+        from line_vault.line_reader import BuiltinLineReader
+
+        while not self._stop_event.is_set():
+            settings = self.db.get_settings()
+            if not settings.get("auto_update_enabled", True):
+                if self._stop_event.wait(timeout=2.0):
+                    break
+                continue
+
+            interval_min = max(1, int(settings.get("auto_update_interval_minutes", 5)))
+            interval_sec = interval_min * 60
+
+            # Wait for the interval before running the first cycle
+            if self._stop_event.wait(timeout=interval_sec):
+                break
+
+            try:
+                reader = BuiltinLineReader()
+                reader.run_native_sync(self.archiver, days=0, analyzer=self.analyzer)
+                monitored_chats = self.db.list_chats(only_monitored=True)
+                for c in monitored_chats:
+                    if self._stop_event.is_set():
+                        break
+                    try:
+                        self.analyzer.analyze_chat(c["chat_id"])
+                    except (ValueError, OSError, sqlite3.Error):
+                        continue
+            except (OSError, RuntimeError, sqlite3.Error):
+                continue
 
 
 class VaultRequestHandler(BaseHTTPRequestHandler):
@@ -167,6 +227,9 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                 "fts5_enabled": self.db.has_fts5,
                 "platform": platform.platform(),
             })
+
+        if path == "/api/settings":
+            return self._send_json(self.db.get_settings())
 
         if path == "/api/about":
             return self._send_json({
@@ -349,6 +412,50 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        # POST /api/settings
+        if path == "/api/settings":
+            body = self._read_json_body()
+            updated = self.db.update_settings(body)
+            return self._send_json(updated)
+
+        # POST /api/pick-folder
+        if path == "/api/pick-folder":
+            body = self._read_json_body()
+            init_dir = str(body.get("initial_dir") or "").strip()
+            mock_path = str(body.get("mock_path") or "").strip()
+            selected_path = mock_path
+            if not selected_path and os.environ.get("PYTEST_CURRENT_TEST"):
+                selected_path = init_dir or str(self.server_vault_dir)
+            elif not selected_path and sys.platform == "win32":
+                try:
+                    ps_script = (
+                        "Add-Type -AssemblyName System.Windows.Forms; "
+                        "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                        "$f.Description = '請選擇 LINE Vault 媒體保存目錄'; "
+                        "$f.ShowNewFolderButton = $true; "
+                    )
+                    if init_dir and os.path.isdir(init_dir):
+                        ps_script += f"$f.SelectedPath = '{init_dir}'; "
+                    ps_script += (
+                        "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
+                        "Write-Output $f.SelectedPath "
+                        "}"
+                    )
+                    proc = subprocess.run(
+                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=15,
+                        check=False,
+                    )
+                    out = proc.stdout.strip()
+                    if out and os.path.isdir(out):
+                        selected_path = out
+                except (subprocess.SubprocessError, OSError):
+                    selected_path = ""
+            return self._send_json({"status": "ok", "selected_path": selected_path})
 
         # POST /api/chats/<chat_id>/delete
         del_match = re.match(r"^/api/chats/([^/]+)/delete$", path)
@@ -586,9 +693,27 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
         rel_path = media.get("vault_rel_path") or ""
         base_vault = os.path.normpath(os.path.realpath(str(self.server_vault_dir)))
-        fullpath = os.path.normpath(os.path.realpath(os.path.join(base_vault, rel_path)))
+        settings = self.db.get_settings()
+        custom_storage = os.path.normpath(os.path.realpath(str(settings.get("media_storage_dir", ""))))
 
-        if not fullpath.startswith(base_vault):
+        allowed_roots = [base_vault]
+        if custom_storage and os.path.isdir(custom_storage):
+            allowed_roots.append(custom_storage)
+
+        if os.path.isabs(rel_path):
+            fullpath = os.path.normpath(os.path.realpath(rel_path))
+        else:
+            fullpath = os.path.normpath(os.path.realpath(os.path.join(base_vault, rel_path)))
+            if not os.path.isfile(fullpath) and custom_storage:
+                cand = os.path.normpath(os.path.realpath(os.path.join(custom_storage, rel_path)))
+                if os.path.isfile(cand):
+                    fullpath = cand
+
+        is_allowed = any(
+            fullpath == root or fullpath.startswith(root + os.sep)
+            for root in allowed_roots
+        )
+        if not is_allowed:
             return self._send_error("Access denied", status=403)
 
         if not os.path.isfile(fullpath):
@@ -624,6 +749,7 @@ def create_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     allowed_scan_root: Path | str | None = None,
+    enable_auto_updater: bool = False,
 ) -> ThreadingHTTPServer:
     """Create configured ThreadingHTTPServer instance."""
     v_dir = Path(vault_dir).resolve()
@@ -652,6 +778,12 @@ def create_server(
     BoundHandler.static_dir = static_dir
 
     server = ThreadingHTTPServer((host, port), BoundHandler)
+    if enable_auto_updater:
+        updater = VaultAutoUpdater(db, archiver, analyzer)
+        updater.start()
+        server.auto_updater = updater
+    else:
+        server.auto_updater = None
     return server
 
 
@@ -663,7 +795,13 @@ def run_server(
     allowed_scan_root: Path | str | None = None,
 ) -> None:
     """Run the LINE Vault HTTP server until interrupted."""
-    server = create_server(vault_dir=vault_dir, host=host, port=port, allowed_scan_root=allowed_scan_root)
+    server = create_server(
+        vault_dir=vault_dir,
+        host=host,
+        port=port,
+        allowed_scan_root=allowed_scan_root,
+        enable_auto_updater=True,
+    )
     url = f"http://{host}:{port}"
     print(f"[*] LINE Vault server started at {url}")
     print(f"[*] Vault directory: {Path(vault_dir).resolve()}")
@@ -679,4 +817,6 @@ def run_server(
     except KeyboardInterrupt:
         print("\n[*] Shutting down LINE Vault server...")
     finally:
+        if getattr(server, "auto_updater", None):
+            server.auto_updater.stop()
         server.server_close()

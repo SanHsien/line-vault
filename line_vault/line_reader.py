@@ -594,13 +594,21 @@ class BuiltinLineReader:
         conn: sqlite3.Connection,
         archiver,
         chat_name_filter: str | None,
-        days: int,
-        synced_chat_ids: list[str],
+        days: int = 0,
+        synced_chat_ids: list[str] | None = None,
     ) -> tuple[int, int, int]:
         """Query real chats, contacts, messages, and media from decrypted in-memory LINE database."""
         chats_synced = 0
         messages_synced = 0
         media_archived = 0
+        if synced_chat_ids is None:
+            synced_chat_ids = []
+
+        settings = archiver.db.get_settings() if hasattr(archiver, "db") and archiver.db else {}
+        auto_stickers = bool(settings.get("auto_download_stickers", True))
+        auto_images = bool(settings.get("auto_download_images", True))
+        auto_videos = bool(settings.get("auto_download_videos", True))
+        auto_files = bool(settings.get("auto_download_files", True))
 
         # 1. Own profile MID
         own_mid = ""
@@ -632,23 +640,22 @@ class BuiltinLineReader:
         except sqlite3.Error:
             pass
 
-        # 3. Determine active chats within requested window (or fallback to overall latest chats)
+        # 3. Determine active chats within requested window (days <= 0 implies all-time without limit)
         now_ms = int(time.time() * 1000)
-        cutoff_ms = now_ms - max(1, days) * 86400 * 1000
-
-        active_rows = conn.execute(
-            """
-            SELECT _chatId, MAX(_createdTime) AS last_ts, COUNT(*) AS msg_cnt
-            FROM _message
-            WHERE _chatId IS NOT NULL AND _chatId != '' AND _createdTime >= ?
-            GROUP BY _chatId
-            ORDER BY last_ts DESC
-            LIMIT 60
-            """,
-            (cutoff_ms,),
-        ).fetchall()
-
-        if not active_rows:
+        if days > 0:
+            cutoff_ms = now_ms - days * 86400 * 1000
+            active_rows = conn.execute(
+                """
+                SELECT _chatId, MAX(_createdTime) AS last_ts, COUNT(*) AS msg_cnt
+                FROM _message
+                WHERE _chatId IS NOT NULL AND _chatId != '' AND _createdTime >= ?
+                GROUP BY _chatId
+                ORDER BY last_ts DESC
+                """,
+                (cutoff_ms,),
+            ).fetchall()
+        else:
+            cutoff_ms = 0
             active_rows = conn.execute(
                 """
                 SELECT _chatId, MAX(_createdTime) AS last_ts, COUNT(*) AS msg_cnt
@@ -656,23 +663,32 @@ class BuiltinLineReader:
                 WHERE _chatId IS NOT NULL AND _chatId != ''
                 GROUP BY _chatId
                 ORDER BY last_ts DESC
-                LIMIT 40
                 """
             ).fetchall()
-            cutoff_ms = 0
 
         cache_root = self.root / "Cache" if (self.root / "Cache").exists() else self.root
 
         for raw_chat_id, _last_ts, _msg_cnt in active_rows:
             c_id = str(raw_chat_id)
-            if c_id in group_names:
-                c_name = group_names[c_id]
+            # Classify chat type: community ('m' / 's'), group ('c' / 'r'), direct ('u')
+            if c_id.startswith(("m", "s")):
+                c_type = "community"
+            elif c_id.startswith(("c", "r")):
+                c_type = "group"
+            elif c_id.startswith("u"):
+                c_type = "direct"
+            elif c_id in group_names:
                 c_type = "group"
             elif c_id in contact_names:
-                c_name = contact_names[c_id]
                 c_type = "direct"
             else:
-                # Try resolving name from most frequent non-self sender in this chat
+                c_type = "community" if c_id.startswith(("m", "s")) else ("group" if c_id.startswith(("c", "r")) else "direct")
+
+            if c_id in group_names:
+                c_name = group_names[c_id]
+            elif c_id in contact_names:
+                c_name = contact_names[c_id]
+            else:
                 sender_row = conn.execute(
                     """
                     SELECT _from, COUNT(*) AS cnt
@@ -690,14 +706,14 @@ class BuiltinLineReader:
                     if r[0] and str(r[0]) in contact_names
                 ]
                 if resolved_senders:
-                    c_type = "group" if c_id.startswith(("c", "r")) else "direct"
-                    c_name = (
-                        f"{'、'.join(resolved_senders)} 群組對話"
-                        if c_type == "group"
-                        else resolved_senders[0]
-                    )
+                    if c_type == "community":
+                        c_name = f"{'、'.join(resolved_senders)} 社群對話"
+                    elif c_type == "group":
+                        c_name = f"{'、'.join(resolved_senders)} 群組對話"
+                    else:
+                        c_name = resolved_senders[0]
                 else:
-                    continue
+                    c_name = f"社群_{c_id[:6]}" if c_type == "community" else (f"群組_{c_id[:6]}" if c_type == "group" else f"個人_{c_id[:6]}")
 
             if chat_name_filter and chat_name_filter.strip():
                 if chat_name_filter.strip().casefold() not in c_name.casefold():
@@ -713,8 +729,8 @@ class BuiltinLineReader:
             chats_synced += 1
             synced_chat_ids.append(c_id)
 
-            msg_limit = 2000 if (chat_name_filter and chat_name_filter.strip()) else 300
-            if cutoff_ms > 0 and not (chat_name_filter and chat_name_filter.strip()):
+            if cutoff_ms > 0:
+                msg_limit = 2000 if (chat_name_filter and chat_name_filter.strip()) else 300
                 msg_rows = conn.execute(
                     """
                     SELECT _id, _from, _createdTime, _text, _contentType, _contentMetadata, _contentInfo
@@ -726,16 +742,18 @@ class BuiltinLineReader:
                     (c_id, cutoff_ms, msg_limit),
                 ).fetchall()
             else:
+                # All-time without message count limits
                 msg_rows = conn.execute(
                     """
                     SELECT _id, _from, _createdTime, _text, _contentType, _contentMetadata, _contentInfo
                     FROM _message
                     WHERE _chatId = ?
                     ORDER BY _createdTime DESC
-                    LIMIT ?
                     """,
-                    (c_id, msg_limit),
+                    (c_id,),
                 ).fetchall()
+
+            messages_batch: list[dict] = []
 
             for mid, sender_mid, created_ms, text_val, ctype_int, meta_raw, info_raw in reversed(msg_rows):
                 msg_id = f"line_{c_id[-8:]}_{mid}"
@@ -771,22 +789,57 @@ class BuiltinLineReader:
                 except (ValueError, TypeError):
                     declared_bytes = 0
 
+                can_download = True
                 if kind == 1:
                     c_type_str = "image"
                     body_text = text_val or "[相片]"
+                    can_download = auto_images
                 elif kind == 2:
                     c_type_str = "video"
                     body_text = text_val or "[影片]"
+                    can_download = auto_videos
                 elif kind == 3:
                     c_type_str = "audio"
                     body_text = text_val or "[語音訊息]"
                 elif kind == 7:
-                    c_type_str = "text"
+                    c_type_str = "sticker"
+                    stk_id = meta_obj.get("STKID")
+                    stk_pkg_id = meta_obj.get("STKPKGID")
+                    stk_ver = meta_obj.get("STKVER")
                     stk_txt = meta_obj.get("STKTXT") or "貼圖"
                     body_text = text_val or f"[{stk_txt}]"
+                    file_name = f"sticker_{stk_id}.png" if stk_id else ""
+                    initial_status = "none"
+
+                    if stk_id and auto_stickers:
+                        stk_res = archiver.download_and_archive_sticker(
+                            chat_id=c_id,
+                            message_id=msg_id,
+                            stk_id=stk_id,
+                            stk_pkg_id=stk_pkg_id,
+                            stk_ver=stk_ver,
+                            chat_name=c_name,
+                        )
+                        if stk_res.get("status") == "archived":
+                            media_archived += 1
+                            initial_status = "archived"
+
+                    messages_batch.append({
+                        "message_id": msg_id,
+                        "chat_id": c_id,
+                        "sender_id": s_mid or "me",
+                        "sender_name": sender_name,
+                        "timestamp_ms": ts_ms,
+                        "content_type": c_type_str,
+                        "text_content": str(body_text),
+                        "media_status": initial_status,
+                        "file_name": file_name,
+                    })
+                    continue
                 elif kind == 14:
                     c_type_str = "file"
                     body_text = text_val or (f"[檔案] {file_name}" if file_name else "[檔案]")
+                    can_download = auto_files
                 else:
                     c_type_str = "text"
                     body_text = text_val or ""
@@ -794,21 +847,21 @@ class BuiltinLineReader:
                 if not body_text and c_type_str == "text":
                     continue
 
-                initial_status = "pending" if (key_material and (declared_bytes or thumb_path)) else "none"
-                archiver.db.upsert_message(
-                    message_id=msg_id,
-                    chat_id=c_id,
-                    sender_id=s_mid or "me",
-                    sender_name=sender_name,
-                    timestamp_ms=ts_ms,
-                    content_type=c_type_str,
-                    text_content=str(body_text),
-                    media_status=initial_status,
-                    file_name=file_name,
-                )
-                messages_synced += 1
+                initial_status = "pending" if (can_download and key_material and (declared_bytes or thumb_path)) else "none"
 
-                if key_material and (declared_bytes or thumb_path) and media_archived < 150:
+                messages_batch.append({
+                    "message_id": msg_id,
+                    "chat_id": c_id,
+                    "sender_id": s_mid or "me",
+                    "sender_name": sender_name,
+                    "timestamp_ms": ts_ms,
+                    "content_type": c_type_str,
+                    "text_content": str(body_text),
+                    "media_status": initial_status,
+                    "file_name": file_name,
+                })
+
+                if can_download and key_material and (declared_bytes or thumb_path):
                     scan_res = archiver.scan_and_archive_line_cache(
                         chat_id=c_id,
                         message_id=msg_id,
@@ -821,7 +874,11 @@ class BuiltinLineReader:
                     if scan_res.get("status") == "archived":
                         media_archived += 1
 
-            if chats_synced >= 35 and not (chat_name_filter and chat_name_filter.strip()):
+            if messages_batch:
+                archiver.db.upsert_messages_batch(messages_batch)
+                messages_synced += len(messages_batch)
+
+            if days > 0 and chats_synced >= 35 and not (chat_name_filter and chat_name_filter.strip()):
                 break
 
         return chats_synced, messages_synced, media_archived
@@ -830,7 +887,7 @@ class BuiltinLineReader:
         self,
         archiver,
         chat_name: str | None = None,
-        days: int = 14,
+        days: int = 0,
         analyzer=None,
     ) -> dict:
         """Perform an all-in-one built-in sync of Windows LINE databases and media cache."""

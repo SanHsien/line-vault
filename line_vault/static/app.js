@@ -23,6 +23,7 @@ document.addEventListener("DOMContentLoaded", () => {
       filterMonitored: "監控中",
       filterGroup: "群組",
       filterDirect: "個人",
+      filterCommunity: "社群",
       filterChatPlaceholder: "過濾聊天室名稱...",
       globalSearchPlaceholder: "搜尋所有對話紀錄、相片、影片與文件檔案...",
       exportReport: "匯出報告",
@@ -69,6 +70,7 @@ document.addEventListener("DOMContentLoaded", () => {
       filterMonitored: "Monitored",
       filterGroup: "Groups",
       filterDirect: "Direct",
+      filterCommunity: "Community",
       filterChatPlaceholder: "Filter chat name...",
       globalSearchPlaceholder: "Search messages, photos, videos, and documents...",
       exportReport: "Export Report",
@@ -127,8 +129,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateStatusBox = document.getElementById("updateStatusBox");
   const btnCheckUpdate = document.getElementById("btnCheckUpdate");
   const btnDownloadUpdate = document.getElementById("btnDownloadUpdate");
-  const btnOpenReleases = document.getElementById("btnOpenReleases");
-  const btnOpenRepo = document.getElementById("btnOpenRepo");
 
   const btnOpenHelp = document.getElementById("btnOpenHelp");
   const txtBtnHelp = document.getElementById("txtBtnHelp");
@@ -179,11 +179,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const settingsFts5 = document.getElementById("settingsFts5");
   const settingsLineStatus = document.getElementById("settingsLineStatus");
   const inputLineDataDir = document.getElementById("inputLineDataDir");
-  const inputSyncDays = document.getElementById("inputSyncDays");
+  const inputMediaStorageDir = document.getElementById("inputMediaStorageDir");
+  const btnPickMediaDir = document.getElementById("btnPickMediaDir");
+  const chkAutoStickers = document.getElementById("chkAutoStickers");
+  const chkAutoImages = document.getElementById("chkAutoImages");
+  const chkAutoVideos = document.getElementById("chkAutoVideos");
+  const chkAutoFiles = document.getElementById("chkAutoFiles");
   const inputTargetChatName = document.getElementById("inputTargetChatName");
   const btnModalSyncMcp = document.getElementById("btnModalSyncMcp");
   const btnModalScanLine = document.getElementById("btnModalScanLine");
-  const toggleAutoPoll = document.getElementById("toggleAutoPoll");
+  const toggleAutoUpdate = document.getElementById("toggleAutoUpdate");
+  const inputAutoUpdateInterval = document.getElementById("inputAutoUpdateInterval");
 
   // GUI Chat History Import Elements
   const txtImportSectionTitle = document.getElementById("txtImportSectionTitle");
@@ -335,7 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       let url = "/api/chats?";
       if (chatFilter === "monitored") url += "monitored=1&";
-      else if (chatFilter === "group" || chatFilter === "direct") url += `chat_type=${chatFilter}&`;
+      else if (chatFilter === "group" || chatFilter === "direct" || chatFilter === "community") url += `chat_type=${chatFilter}&`;
       if (chatSearchQuery) url += `q=${encodeURIComponent(chatSearchQuery)}&`;
 
       const res = await fetch(url);
@@ -372,7 +378,8 @@ document.addEventListener("DOMContentLoaded", () => {
       card.className = `chat-card ${c.chat_id === currentChatId ? "active" : ""}`;
       card.onclick = () => selectChat(c);
 
-      const typeLabel = c.chat_type === "direct" ? "個人" : "群組";
+      const typeLabel = c.chat_type === "direct" ? "個人" : (c.chat_type === "community" ? "社群" : "群組");
+      const typeIcon = c.chat_type === "direct" ? "👤" : (c.chat_type === "community" ? "🌐" : "👥");
       const monitoredHtml = c.monitored
         ? '<span class="monitored-badge">🛡️ 監控備份中</span>'
         : "";
@@ -383,7 +390,7 @@ document.addEventListener("DOMContentLoaded", () => {
       card.innerHTML = `
         <div class="chat-card-top">
           <span class="chat-card-title">
-            <span>${c.chat_type === "direct" ? "👤" : "👥"}</span>
+            <span>${typeIcon}</span>
             <span>${escapeHtml(c.chat_name)}</span>
           </span>
           <div style="display:flex;align-items:center;gap:6px;">
@@ -468,9 +475,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (activeEl) activeEl.classList.add("active");
 
     // Center header
-    activeChatAvatar.textContent = chat.chat_type === "direct" ? "👤" : "👥";
+    activeChatAvatar.textContent = chat.chat_type === "direct" ? "👤" : (chat.chat_type === "community" ? "🌐" : "👥");
     activeChatTitle.textContent = chat.chat_name;
-    activeChatSubtitle.textContent = `${chat.chat_type === "direct" ? "個人對話" : "多人群組"} • ID: ${chat.chat_id}`;
+    const typeDesc = chat.chat_type === "direct" ? "個人對話" : (chat.chat_type === "community" ? "LINE 社群" : "多人群組");
+    activeChatSubtitle.textContent = `${typeDesc} • ID: ${chat.chat_id}`;
     centerMonitorToggle.disabled = false;
     centerMonitorToggle.checked = Boolean(chat.monitored);
 
@@ -589,7 +597,15 @@ document.addEventListener("DOMContentLoaded", () => {
       row.className = `message-row ${isMine ? "mine" : "others"}`;
 
       let mediaHtml = "";
-      if (m.media_id && m.media_type === "image") {
+      if (m.source_role === "sticker" || m.content_type === "sticker") {
+        if (m.media_id) {
+          mediaHtml = `
+            <div class="sticker-bubble" style="padding:4px;margin-top:4px;">
+              <img src="/api/media/file/${m.media_id}" alt="貼圖" style="max-width:140px;max-height:140px;display:block;" loading="lazy" />
+            </div>
+          `;
+        }
+      } else if (m.media_id && m.media_type === "image") {
         mediaHtml = `
           <div class="media-preview-box">
             <a href="/api/media/file/${m.media_id}" target="_blank" title="點擊檢視原圖">
@@ -1177,39 +1193,17 @@ document.addEventListener("DOMContentLoaded", () => {
           throw new Error(data.error || "下載失敗");
         }
       } catch (err) {
-        showToast("一鍵下載失敗，正在為您開啟 Releases 網頁...", "🌐");
-        await openExternalRepoUrl(latestReleasePageUrl);
+        if (updateStatusBox) {
+          updateStatusBox.innerHTML = `
+            <div style="font-weight:700;color:var(--accent-red);margin-bottom:4px;">❌ 下載失敗</div>
+            <div style="color:var(--text-muted);">${escapeHtml(err.message || "下載失敗")}</div>
+          `;
+        }
+        showToast("一鍵下載失敗: " + err.message, "❌");
       } finally {
         btnDownloadUpdate.disabled = false;
         btnDownloadUpdate.innerHTML = "<span>⬇️ 一鍵下載最新執行檔至 Downloads</span>";
       }
-    });
-  }
-
-  async function openExternalRepoUrl(url) {
-    try {
-      const res = await fetch("/api/open-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      if (!res.ok) {
-        window.open(url, "_blank");
-      }
-    } catch (e) {
-      window.open(url, "_blank");
-    }
-  }
-
-  if (btnOpenReleases) {
-    btnOpenReleases.addEventListener("click", () => {
-      openExternalRepoUrl(latestReleasePageUrl);
-    });
-  }
-
-  if (btnOpenRepo) {
-    btnOpenRepo.addEventListener("click", () => {
-      openExternalRepoUrl(repoHomeUrl);
     });
   }
 
@@ -1261,14 +1255,24 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 10. Settings & Sync Modal + Help Modal Handlers
+  async function saveSettings(patch) {
+    try {
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+    } catch (e) {
+      // Background save silent error handling
+    }
+  }
+
   async function openSettingsModal() {
     if (!settingsModal) return;
     if (helpModal) helpModal.style.display = "none";
     settingsModal.style.display = "flex";
     inputLineDataDir.value = localStorage.getItem("line_vault_line_data_dir") || "";
-    inputSyncDays.value = localStorage.getItem("line_vault_sync_days") || "14";
     inputTargetChatName.value = localStorage.getItem("line_vault_target_chat") || "";
-    toggleAutoPoll.checked = localStorage.getItem("line_vault_auto_poll") === "true";
 
     try {
       const res = await fetch("/api/status");
@@ -1284,6 +1288,52 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       settingsVaultDir.textContent = "無法取得狀態";
     }
+
+    try {
+      const resSet = await fetch("/api/settings");
+      if (resSet.ok) {
+        const cfg = await resSet.json();
+        if (inputMediaStorageDir) inputMediaStorageDir.value = cfg.media_storage_dir || "";
+        if (chkAutoStickers) chkAutoStickers.checked = !!cfg.auto_download_stickers;
+        if (chkAutoImages) chkAutoImages.checked = !!cfg.auto_download_images;
+        if (chkAutoVideos) chkAutoVideos.checked = !!cfg.auto_download_videos;
+        if (chkAutoFiles) chkAutoFiles.checked = !!cfg.auto_download_files;
+        if (toggleAutoUpdate) toggleAutoUpdate.checked = !!cfg.auto_update_enabled;
+        if (inputAutoUpdateInterval) inputAutoUpdateInterval.value = cfg.auto_update_interval_minutes || 5;
+      }
+    } catch (e) {
+      // Settings read fallback
+    }
+  }
+
+  if (chkAutoStickers) chkAutoStickers.addEventListener("change", (e) => saveSettings({ auto_download_stickers: e.target.checked }));
+  if (chkAutoImages) chkAutoImages.addEventListener("change", (e) => saveSettings({ auto_download_images: e.target.checked }));
+  if (chkAutoVideos) chkAutoVideos.addEventListener("change", (e) => saveSettings({ auto_download_videos: e.target.checked }));
+  if (chkAutoFiles) chkAutoFiles.addEventListener("change", (e) => saveSettings({ auto_download_files: e.target.checked }));
+  if (inputMediaStorageDir) inputMediaStorageDir.addEventListener("change", (e) => saveSettings({ media_storage_dir: e.target.value.trim() }));
+  if (inputAutoUpdateInterval) inputAutoUpdateInterval.addEventListener("change", (e) => saveSettings({ auto_update_interval_minutes: parseInt(e.target.value, 10) || 5 }));
+
+  if (btnPickMediaDir) {
+    btnPickMediaDir.addEventListener("click", async () => {
+      try {
+        btnPickMediaDir.disabled = true;
+        const res = await fetch("/api/pick-folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initial_dir: inputMediaStorageDir ? inputMediaStorageDir.value.trim() : "" }),
+        });
+        const data = await res.json();
+        if (data.selected_path && inputMediaStorageDir) {
+          inputMediaStorageDir.value = data.selected_path;
+          saveSettings({ media_storage_dir: data.selected_path });
+          showToast(`已設定媒體存放目錄：${data.selected_path}`, "📁");
+        }
+      } catch (err) {
+        showToast("選擇資料夾失敗", "⚠️");
+      } finally {
+        btnPickMediaDir.disabled = false;
+      }
+    });
   }
 
   if (btnOpenSettings && settingsModal) {
@@ -1322,19 +1372,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Sync Built-in Native Engine Button in Modal
+  // Sync Built-in Native Engine Button in Modal (unlimited all-time days=0)
   if (btnModalSyncMcp) {
     btnModalSyncMcp.addEventListener("click", async () => {
       btnModalSyncMcp.disabled = true;
       btnModalSyncMcp.innerHTML = "<span>⏳</span> 內建引擎同步中...";
 
       const chatName = inputTargetChatName.value.trim() || null;
-      const days = parseInt(inputSyncDays.value || "14", 10);
       const cacheDir = inputLineDataDir.value.trim() || null;
 
       // Persist preferences
       localStorage.setItem("line_vault_line_data_dir", inputLineDataDir.value.trim());
-      localStorage.setItem("line_vault_sync_days", days.toString());
       localStorage.setItem("line_vault_target_chat", inputTargetChatName.value.trim());
 
       try {
@@ -1343,7 +1391,7 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_name: chatName,
-            days: days,
+            days: 0,
             cache_dir: cacheDir,
           }),
         });
@@ -1352,7 +1400,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const sr = data.sync_result || {};
           if (settingsModal) settingsModal.style.display = "none";
           showToast(
-            `內建引擎同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則紀錄，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
+            `內建引擎同步完成！全時間範圍同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則紀錄，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
             "🔐"
           );
           await fetchStatus();
@@ -1416,53 +1464,37 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Auto-poll Timer
-  let autoPollInterval = null;
-  function updateAutoPollSchedule(enabled) {
-    if (autoPollInterval) {
-      clearInterval(autoPollInterval);
-      autoPollInterval = null;
+  // Auto-update UI Timer
+  let autoUpdateIntervalTimer = null;
+  function updateAutoUpdateSchedule(enabled, intervalMin = 5) {
+    if (autoUpdateIntervalTimer) {
+      clearInterval(autoUpdateIntervalTimer);
+      autoUpdateIntervalTimer = null;
     }
     if (enabled) {
-      // Run every 5 minutes (300,000 ms)
-      autoPollInterval = setInterval(async () => {
-        const cacheDir = localStorage.getItem("line_vault_line_data_dir") || "";
-        const readerScript = localStorage.getItem("line_vault_reader_script") || "";
-        const days = parseInt(localStorage.getItem("line_vault_sync_days") || "14", 10);
+      const ms = Math.max(1, intervalMin) * 60000;
+      autoUpdateIntervalTimer = setInterval(async () => {
         try {
-          await fetch("/api/sync-mcp", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              days: days,
-              reader_script: readerScript || null,
-              cache_dir: cacheDir || null,
-            }),
-          });
           await fetchStatus();
           await fetchChats();
           if (currentChatId) {
             loadChatInsight(currentChatId);
           }
         } catch (e) {
-          // Background polling silent error recovery
+          // Background UI refresh error recovery
         }
-      }, 300000);
+      }, ms);
     }
   }
 
-  if (toggleAutoPoll) {
-    toggleAutoPoll.addEventListener("change", (e) => {
+  if (toggleAutoUpdate) {
+    toggleAutoUpdate.addEventListener("change", (e) => {
       const isChecked = e.target.checked;
-      localStorage.setItem("line_vault_auto_poll", isChecked ? "true" : "false");
-      updateAutoPollSchedule(isChecked);
-      showToast(isChecked ? "已啟用每 5 分鐘背景自動巡檢與防過期備份" : "已關閉背景自動巡檢", isChecked ? "⏱️" : "⏸️");
+      const intervalMin = parseInt(inputAutoUpdateInterval ? inputAutoUpdateInterval.value : "5", 10) || 5;
+      saveSettings({ auto_update_enabled: isChecked });
+      updateAutoUpdateSchedule(isChecked, intervalMin);
+      showToast(isChecked ? `已啟用每 ${intervalMin} 分鐘背景自動更新` : "已關閉背景自動更新", isChecked ? "⏱️" : "⏸️");
     });
-
-    if (localStorage.getItem("line_vault_auto_poll") === "true") {
-      toggleAutoPoll.checked = true;
-      updateAutoPollSchedule(true);
-    }
   }
 
   // 11. Theme (System / Light / Dark) & Language Toggle

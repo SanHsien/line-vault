@@ -1438,4 +1438,294 @@ def test_theme_modes_and_plain_txt_import(tmp_path: Path):
     assert sample_res["imported_messages"] == 6
 
 
+def test_settings_api_and_folder_sanitization(tmp_path: Path):
+    """Verify settings defaults, GET/POST persistence, folder sanitization, and About modal integrity."""
+    import json
+    import threading
+    import urllib.request
+
+    from line_vault.archiver import _sanitize_chat_folder_name
+    from line_vault.db import VaultDB
+    from line_vault.server import create_server
+
+    # 1. Folder sanitization tests
+    assert _sanitize_chat_folder_name("專案A-客戶交付群") == "專案A-客戶交付群"
+    assert _sanitize_chat_folder_name('<重要>測試/路徑?*"') == "重要_測試_路徑"
+    assert _sanitize_chat_folder_name("  .測試群.  ") == "測試群"
+    assert _sanitize_chat_folder_name("", fallback_id="fallback_chat") == "fallback_chat"
+
+    # 2. Settings default values
+    v_dir = tmp_path / "v_settings"
+    db = VaultDB(v_dir / "vault.db")
+    settings = db.get_settings()
+    assert settings["auto_update_interval_minutes"] == 5
+    assert settings["auto_update_enabled"] is True
+    assert settings["auto_download_stickers"] is True
+    assert settings["auto_download_images"] is True
+    assert settings["auto_download_videos"] is True
+    assert settings["auto_download_files"] is True
+    assert settings["organize_by_chat_name"] is True
+    assert str(v_dir.resolve()) in settings["media_storage_dir"]
+
+    # 3. Settings REST API GET / POST
+    server = create_server(vault_dir=v_dir, host="127.0.0.1", port=0)
+    port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # GET /api/settings
+        with urllib.request.urlopen(f"{base_url}/api/settings") as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["auto_update_interval_minutes"] == 5
+
+        # POST /api/settings update
+        post_data = {
+            "auto_update_interval_minutes": 10,
+            "auto_download_stickers": False,
+            "media_storage_dir": str((v_dir / "custom_media").resolve()),
+        }
+        req = urllib.request.Request(
+            f"{base_url}/api/settings",
+            data=json.dumps(post_data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            updated = json.loads(resp.read().decode("utf-8"))
+            assert updated["auto_update_interval_minutes"] == 10
+            assert updated["auto_download_stickers"] is False
+
+        # Verify GET reflects updated settings
+        with urllib.request.urlopen(f"{base_url}/api/settings") as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["auto_update_interval_minutes"] == 10
+            assert data["auto_download_stickers"] is False
+
+        # POST /api/pick-folder
+        req_pick = urllib.request.Request(
+            f"{base_url}/api/pick-folder",
+            data=json.dumps({"initial_dir": ""}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_pick) as resp:
+            assert resp.status == 200
+            pick_res = json.loads(resp.read().decode("utf-8"))
+            assert pick_res["status"] == "ok"
+    finally:
+        server.shutdown()
+        server.server_close()
+        db.close()
+
+    # 4. Verify About modal in index.html has no btnOpenReleases or btnOpenRepo
+    repo_root = Path(__file__).resolve().parent.parent
+    index_html = (repo_root / "line_vault" / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (repo_root / "line_vault" / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="btnOpenReleases"' not in index_html
+    assert 'id="btnOpenRepo"' not in index_html
+    assert "btnOpenReleases" not in app_js
+    assert "btnOpenRepo" not in app_js
+    assert "openExternalRepoUrl" not in app_js
+
+
+def test_sticker_download_and_cache_management(tmp_path: Path):
+    """Verify sticker archiving, local cache priority, de-duplication, and mock CDN fetching."""
+    from line_vault.archiver import MediaArchiver
+    from line_vault.db import VaultDB
+
+    vault_dir = tmp_path / "v_sticker"
+    db = VaultDB(vault_dir / "vault.db")
+    archiver = MediaArchiver(vault_dir, db)
+
+    chat_id = "c_test_chat"
+    db.upsert_chat(chat_id=chat_id, chat_name="貼圖測試群")
+    msg_id = "m_stk_test_01"
+    db.upsert_message(message_id=msg_id, chat_id=chat_id, content_type="sticker")
+
+    # 1. Local sticker cache hit
+    mock_stk_root = tmp_path / "line_stickers"
+    pkg_dir = mock_stk_root / "pkg_42"
+    pkg_dir.mkdir(parents=True)
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    (pkg_dir / "1001.png").write_bytes(fake_png)
+
+    res_local = archiver.download_and_archive_sticker(
+        chat_id=chat_id,
+        message_id=msg_id,
+        stk_id="1001",
+        stk_pkg_id="pkg_42",
+        sticker_root=mock_stk_root,
+    )
+    assert res_local["status"] == "archived"
+    assert res_local["media"]["media_type"] == "image"
+    assert res_local["media"]["source_role"] == "sticker"
+    assert "sticker_1001.png" in res_local["file_path"]
+
+    # 2. De-duplication (local vault cache priority, does not re-download)
+    res_repeat = archiver.download_and_archive_sticker(
+        chat_id=chat_id,
+        message_id=msg_id,
+        stk_id="1001",
+        stk_pkg_id="pkg_42",
+        sticker_root=mock_stk_root,
+    )
+    assert res_repeat["status"] == "archived"
+    assert res_repeat.get("cached") is True
+
+    # 3. CDN download via mock fetcher
+    def mock_fetcher(url: str) -> bytes | None:
+        if "sticker/2002/" in url:
+            return b"\x89PNG\r\n\x1a\n" + b"\x42" * 40
+        return None
+
+    msg_id_2 = "m_stk_test_02"
+    db.upsert_message(message_id=msg_id_2, chat_id=chat_id, content_type="sticker")
+    res_cdn = archiver.download_and_archive_sticker(
+        chat_id=chat_id,
+        message_id=msg_id_2,
+        stk_id="2002",
+        fetcher=mock_fetcher,
+    )
+    assert res_cdn["status"] == "archived"
+    assert res_cdn["media"]["size_bytes"] == 48
+
+    # 4. Failure handling (when sticker is missing everywhere)
+    res_fail = archiver.download_and_archive_sticker(
+        chat_id=chat_id,
+        message_id="m_stk_none",
+        stk_id="9999",
+        fetcher=lambda url: None,
+    )
+    assert res_fail["status"] == "download_failed"
+    assert "sticker_id" in res_fail
+
+    db.close()
+
+
+def test_native_sync_days_zero_unlimited_and_community_and_type_filters(tmp_path: Path):
+    """Verify days=0 unlimited sync (>300 msgs), community classification, and checkbox filtering."""
+    import json
+    import sqlite3
+    import time
+
+    from line_vault.analyzer import ChatAnalyzer
+    from line_vault.archiver import MediaArchiver
+    from line_vault.db import VaultDB
+    from line_vault.line_reader import BuiltinLineReader
+
+    # 1. Create mock LINE Data directory with a test .edb containing >300 messages
+    mock_line_root = tmp_path / "mock_line"
+    mock_db_dir = mock_line_root / "Data" / "db"
+    mock_db_dir.mkdir(parents=True)
+    edb_path = mock_db_dir / "unlimited_test.edb"
+
+    conn = sqlite3.connect(str(edb_path))
+    conn.execute("CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT)")
+    conn.execute("CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayNameOverridden TEXT, _displayName TEXT)")
+    conn.execute(
+        "CREATE TABLE _message ("
+        "_id INTEGER PRIMARY KEY, _chatId TEXT, _from TEXT, "
+        "_createdTime INTEGER, _text TEXT, _contentType INTEGER, "
+        "_contentMetadata TEXT, _contentInfo TEXT)"
+    )
+
+    base_time = int(time.time() * 1000) - 10000000
+    # Group chat (c_ prefix)
+    conn.execute("INSERT INTO _groupChat VALUES ('c_dev_team', '研發專案核心群')")
+    conn.execute("INSERT INTO _contact VALUES ('u_boss', '', '研發總監')")
+    conn.execute("INSERT INTO _contact VALUES ('u_member', '', '工程師')")
+    # Community chat (m_ prefix)
+    conn.execute("INSERT INTO _groupChat VALUES ('m_openchat_tech', '開源技術社群')")
+    # Direct chat (u_ prefix)
+    conn.execute("INSERT INTO _contact VALUES ('u_vendor_lee', '', '李經理')")
+
+    # Insert 350 messages into c_dev_team (>300 former limit)
+    msgs_data = []
+    for i in range(1, 351):
+        ts = base_time + i * 1000
+        mid = 1000 + i
+        if i == 50:
+            # Sticker message
+            meta = json.dumps({"STKID": "stk_888", "STKPKGID": "pkg_99", "STKTXT": "讚"})
+            msgs_data.append((mid, "c_dev_team", "u_boss", ts, "", 7, meta, "{}"))
+        elif i == 100:
+            # Image message
+            meta = json.dumps({"FILE_SIZE": "128"})
+            msgs_data.append((mid, "c_dev_team", "u_boss", ts, "[相片]", 1, meta, "{}"))
+        else:
+            msgs_data.append((mid, "c_dev_team", "u_member", ts, f"測試對話訊息第 {i} 則", 0, "{}", "{}"))
+
+    # Also add 1 message to community and 1 to direct chat
+    msgs_data.append((2001, "m_openchat_tech", "u_boss", base_time + 500000, "歡迎加入開源技術社群！", 0, "{}", "{}"))
+    msgs_data.append((3001, "u_vendor_lee", "u_vendor_lee", base_time + 600000, "你好，請問合約進度？", 0, "{}", "{}"))
+
+    conn.executemany("INSERT INTO _message VALUES (?, ?, ?, ?, ?, ?, ?, ?)", msgs_data)
+    conn.commit()
+    conn.close()
+
+    # 2. Test Scenario A: sync with auto_download_stickers=False and auto_download_images=False
+    vault_dir = tmp_path / "v_unlimited"
+    db = VaultDB(vault_dir / "vault.db")
+    db.update_settings({
+        "auto_download_stickers": False,
+        "auto_download_images": False,
+    })
+    archiver = MediaArchiver(vault_dir, db)
+    analyzer = ChatAnalyzer(db)
+    reader = BuiltinLineReader(line_root=mock_line_root / "Data")
+
+    sync_res = reader.run_native_sync(archiver, days=0, analyzer=analyzer)
+    assert sync_res["status"] == "ok"
+    assert sync_res["chats_synced"] >= 3
+
+    # Verify chat types: community, group, direct
+    chat_comm = db.get_chat("m_openchat_tech")
+    assert chat_comm is not None
+    assert chat_comm["chat_type"] == "community"
+
+    chat_grp = db.get_chat("c_dev_team")
+    assert chat_grp is not None
+    assert chat_grp["chat_type"] == "group"
+
+    chat_dir = db.get_chat("u_vendor_lee")
+    assert chat_dir is not None
+    assert chat_dir["chat_type"] == "direct"
+
+    # Verify >300 messages are ALL synced without truncation
+    all_grp_msgs = db.search_messages(chat_id="c_dev_team", limit=0)
+    assert len(all_grp_msgs) == 350
+
+    # Since auto_download_stickers=False, sticker was not archived
+    stk_msg = next((m for m in all_grp_msgs if m["content_type"] == "sticker"), None)
+    assert stk_msg is not None
+    assert stk_msg["media_status"] == "none"
+
+    # 3. Test Scenario B: Enable stickers download and re-sync
+    fake_stk_png = b"\x89PNG\r\n\x1a\n" + b"\x55" * 32
+
+    def mock_fetcher(url: str) -> bytes:
+        return fake_stk_png
+
+    db.update_settings({"auto_download_stickers": True})
+    stk_res = archiver.download_and_archive_sticker(
+        chat_id="c_dev_team",
+        message_id=stk_msg["message_id"],
+        stk_id="stk_888",
+        fetcher=mock_fetcher,
+    )
+    assert stk_res["status"] == "archived"
+
+    # Verify analyzer covers unlimited date range and 350 messages
+    insight = analyzer.analyze_chat("c_dev_team")
+    assert "350 則對話" in insight["summary"]
+    assert "無上限分析" in insight["summary"] or "對話時間範圍" in insight["summary"]
+
+    db.close()
+
+
 

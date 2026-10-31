@@ -9,6 +9,8 @@ import re
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -27,6 +29,16 @@ def _sanitize_path_part(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "_", text)
 
 
+def _sanitize_chat_folder_name(chat_name: str, fallback_id: str = "") -> str:
+    """Sanitize chat room name for directory names, preserving CJK/Unicode and replacing illegal chars."""
+    if not chat_name or not str(chat_name).strip():
+        return _sanitize_path_part(fallback_id) if fallback_id else "chat"
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(chat_name)).strip(" ._")
+    if not cleaned:
+        return _sanitize_path_part(fallback_id) if fallback_id else "chat"
+    return cleaned
+
+
 class MediaArchiver:
     """Handles permanent archiving of LINE media attachments, cache extraction, and mock seeding."""
 
@@ -35,6 +47,29 @@ class MediaArchiver:
         self.media_dir = self.vault_dir / "media"
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self.db = db
+
+    def _get_chat_folder_name(self, chat_id: str, chat_name: str | None = None) -> str:
+        """Resolve destination subdirectory for a chat room according to settings."""
+        settings = self.db.get_settings() if hasattr(self, "db") and self.db else {}
+        if not settings.get("organize_by_chat_name", True):
+            return _sanitize_path_part(chat_id)
+        effective_name = chat_name
+        if not effective_name and hasattr(self, "db") and self.db:
+            chat_info = self.db.get_chat(chat_id)
+            if chat_info and chat_info.get("chat_name"):
+                effective_name = chat_info["chat_name"]
+        return _sanitize_chat_folder_name(effective_name or chat_id, fallback_id=chat_id)
+
+    def _get_storage_root(self) -> Path:
+        """Resolve base media storage root directory according to settings."""
+        if hasattr(self, "db") and self.db:
+            settings = self.db.get_settings()
+            custom_dir = settings.get("media_storage_dir")
+            if custom_dir and str(custom_dir).strip():
+                root = Path(custom_dir).resolve()
+                root.mkdir(parents=True, exist_ok=True)
+                return root
+        return self.media_dir
 
     def archive_encrypted_bytes(
         self,
@@ -49,9 +84,10 @@ class MediaArchiver:
         decrypted_bytes = decrypt_e2ee_media(encrypted_data, material_b64)
         info = sniff_media_format(decrypted_bytes, fallback_filename)
 
-        safe_chat = _sanitize_path_part(chat_id)
+        folder_name = self._get_chat_folder_name(chat_id)
         safe_msg = _sanitize_path_part(message_id)
-        chat_folder = self.media_dir / safe_chat
+        storage_root = self._get_storage_root()
+        chat_folder = storage_root / folder_name
         chat_folder.mkdir(parents=True, exist_ok=True)
 
         sha10 = info["sha256"][:10]
@@ -64,7 +100,10 @@ class MediaArchiver:
         with open(dest_file, "wb") as f:
             f.write(decrypted_bytes)
 
-        rel_path = f"media/{safe_chat}/{dest_file.name}"
+        try:
+            rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+        except ValueError:
+            rel_path = str(dest_file.resolve())
         media_id = f"m_{safe_msg}_{sha10[:8]}"
 
         record = self.db.register_media(
@@ -151,16 +190,20 @@ class MediaArchiver:
                         thumb_decrypted = t_data
 
                     info = sniff_media_format(thumb_decrypted, fallback_filename or "thumb.jpg")
-                    safe_chat = _sanitize_path_part(chat_id)
+                    folder_name = self._get_chat_folder_name(chat_id)
                     safe_msg = _sanitize_path_part(message_id)
-                    chat_folder = self.media_dir / safe_chat
+                    storage_root = self._get_storage_root()
+                    chat_folder = storage_root / folder_name
                     chat_folder.mkdir(parents=True, exist_ok=True)
 
                     dest_file = chat_folder / f"{safe_msg}_thumb_{info['sha256'][:8]}{info['ext']}"
                     with open(dest_file, "wb") as f:
                         f.write(thumb_decrypted)
 
-                    rel_path = f"media/{safe_chat}/{dest_file.name}"
+                    try:
+                        rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+                    except ValueError:
+                        rel_path = str(dest_file.resolve())
                     media_id = f"m_{safe_msg}_thumb"
 
                     if not self.db.get_chat(chat_id):
@@ -249,10 +292,17 @@ class MediaArchiver:
                 ext = info["ext"]
                 safe_name = candidate.name if candidate.name.endswith(ext) else f"{candidate.stem}{ext}"
 
-                chat_folder = self.media_dir / chat_id
+                folder_name = self._get_chat_folder_name(chat_id, "本機 LINE 快取掃描歸檔")
+                storage_root = self._get_storage_root()
+                chat_folder = storage_root / folder_name
                 chat_folder.mkdir(parents=True, exist_ok=True)
                 dest_file = chat_folder / f"{msg_id}{ext}"
                 dest_file.write_bytes(restored)
+
+                try:
+                    rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+                except ValueError:
+                    rel_path = str(dest_file.resolve())
 
                 self.db.upsert_message(
                     message_id=msg_id,
@@ -275,7 +325,7 @@ class MediaArchiver:
                     format_name=info["format"],
                     size_bytes=info["size_bytes"],
                     sha256=info["sha256"],
-                    vault_rel_path=f"media/{chat_id}/{dest_file.name}",
+                    vault_rel_path=rel_path,
                     source_role="original",
                 )
                 media_imported += 1
@@ -292,10 +342,144 @@ class MediaArchiver:
             "media_imported": media_imported,
         }
 
+    def download_and_archive_sticker(
+        self,
+        chat_id: str,
+        message_id: str,
+        stk_id: str | int,
+        stk_pkg_id: str | int | None = None,
+        stk_ver: str | int | None = None,
+        chat_name: str | None = None,
+        fetcher=None,
+        sticker_root: Path | str | None = None,
+    ) -> dict:
+        """Download or fetch from local LINE cache a sticker, permanently archiving it to the vault."""
+        stk_id_str = str(stk_id).strip()
+        if not stk_id_str:
+            return {"status": "invalid_sticker_id", "message_id": message_id}
+
+        folder_name = self._get_chat_folder_name(chat_id, chat_name)
+        storage_root = self._get_storage_root()
+        chat_folder = storage_root / folder_name
+        chat_folder.mkdir(parents=True, exist_ok=True)
+
+        dest_file = chat_folder / f"sticker_{stk_id_str}.png"
+        media_id = f"m_stk_{stk_id_str}"
+
+        try:
+            rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+        except ValueError:
+            rel_path = str(dest_file.resolve())
+
+        # 1. Local vault cache first (repeat without re-downloading)
+        if dest_file.is_file() and dest_file.stat().st_size > 0:
+            existing = self.db.get_media(media_id)
+            if existing:
+                self.db.upsert_message(
+                    message_id=message_id,
+                    chat_id=chat_id,
+                    media_status="archived",
+                    file_name=f"sticker_{stk_id_str}.png",
+                )
+                return {"status": "archived", "media": existing, "cached": True}
+
+            sticker_bytes = dest_file.read_bytes()
+            record = self.db.register_media(
+                media_id=media_id,
+                message_id=message_id,
+                chat_id=chat_id,
+                media_type="image",
+                file_name=f"sticker_{stk_id_str}.png",
+                mime_type="image/png",
+                format_name="png",
+                size_bytes=len(sticker_bytes),
+                sha256=hashlib.sha256(sticker_bytes).hexdigest(),
+                vault_rel_path=rel_path,
+                source_role="sticker",
+            )
+            return {"status": "archived", "media": record, "cached": True}
+
+        # 2. Check local Windows LINE Sticker cache: %LOCALAPPDATA%\\LINE\\Data\\Sticker\\<STKPKGID>\\<STKID>.png
+        sticker_bytes = None
+        stk_pkg_str = str(stk_pkg_id).strip() if stk_pkg_id else ""
+        candidate_paths: list[Path] = []
+        if sticker_root:
+            s_root = Path(sticker_root).resolve()
+            if stk_pkg_str:
+                candidate_paths.append(s_root / stk_pkg_str / f"{stk_id_str}.png")
+            candidate_paths.append(s_root / f"{stk_id_str}.png")
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if local_appdata and stk_pkg_str:
+            candidate_paths.append(
+                Path(local_appdata) / "LINE" / "Data" / "Sticker" / stk_pkg_str / f"{stk_id_str}.png"
+            )
+
+        for cand in candidate_paths:
+            try:
+                if cand.is_file() and cand.stat().st_size > 0:
+                    sticker_bytes = cand.read_bytes()
+                    break
+            except OSError:
+                continue
+
+        # 3. If missing from local cache, download from official LINE sticker CDN
+        if sticker_bytes is None:
+            cdn_urls = [
+                f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{stk_id_str}/iPhone/sticker@2x.png",
+                f"https://stickershop.line-scdn.net/stickershop/v1/sticker/{stk_id_str}/android/sticker.png",
+            ]
+            for url in cdn_urls:
+                if fetcher is not None:
+                    try:
+                        res = fetcher(url)
+                        if res and len(res) > 0:
+                            sticker_bytes = res
+                            break
+                    except (OSError, ValueError, RuntimeError):
+                        continue
+                else:
+                    req = urllib.request.Request(
+                        url,
+                        headers={"User-Agent": "LINE/10.0.0 (Windows; Win64; x64)"},
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=10.0) as resp:
+                            if resp.status == 200:
+                                data = resp.read()
+                                if data and len(data) > 0:
+                                    sticker_bytes = data
+                                    break
+                    except (urllib.error.URLError, TimeoutError, OSError):
+                        continue
+
+        if sticker_bytes is None:
+            return {
+                "status": "download_failed",
+                "message_id": message_id,
+                "sticker_id": stk_id_str,
+                "error": "Sticker could not be retrieved from local cache or CDN",
+            }
+
+        dest_file.write_bytes(sticker_bytes)
+        record = self.db.register_media(
+            media_id=media_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            media_type="image",
+            file_name=f"sticker_{stk_id_str}.png",
+            mime_type="image/png",
+            format_name="png",
+            size_bytes=len(sticker_bytes),
+            sha256=hashlib.sha256(sticker_bytes).hexdigest(),
+            vault_rel_path=rel_path,
+            source_role="sticker",
+        )
+        return {"status": "archived", "media": record, "file_path": str(dest_file)}
+
     def sync_from_mcp_reader(
         self,
         chat_name: str | None = None,
-        days: int = 14,
+        days: int = 0,
         analyzer=None,
         reader_script: Path | str | None = None,
         cache_root: Path | str | None = None,

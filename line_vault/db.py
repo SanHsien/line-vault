@@ -21,6 +21,7 @@ class VaultDB:
         )
         self._conn.row_factory = sqlite3.Row
         self.has_fts5 = False
+        self._settings_path = self.db_path.parent / "settings.json"
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -143,6 +144,70 @@ class VaultDB:
         """Close database connection."""
         with self._lock:
             self._conn.close()
+
+    def get_settings(self) -> dict:
+        """Retrieve settings from settings.json, merging with default settings."""
+        default_storage = str((self.db_path.parent / "media").resolve())
+        defaults = {
+            "auto_download_stickers": True,
+            "auto_download_images": True,
+            "auto_download_videos": True,
+            "auto_download_files": True,
+            "media_storage_dir": default_storage,
+            "organize_by_chat_name": True,
+            "auto_update_enabled": True,
+            "auto_update_interval_minutes": 5,
+        }
+        with self._lock:
+            if not self._settings_path.is_file():
+                try:
+                    self._settings_path.write_text(
+                        json.dumps(defaults, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    return dict(defaults)
+                return dict(defaults)
+
+            try:
+                content = self._settings_path.read_text(encoding="utf-8")
+                loaded = json.loads(content)
+                if not isinstance(loaded, dict):
+                    loaded = {}
+            except (OSError, json.JSONDecodeError):
+                loaded = {}
+
+            merged = dict(defaults)
+            merged.update(loaded)
+            if not merged.get("media_storage_dir"):
+                merged["media_storage_dir"] = default_storage
+            return merged
+
+    def update_settings(self, new_settings: dict) -> dict:
+        """Update settings and persist to settings.json."""
+        if not isinstance(new_settings, dict):
+            return self.get_settings()
+        with self._lock:
+            current = self.get_settings()
+            for k, v in new_settings.items():
+                if k in current:
+                    if isinstance(current[k], bool):
+                        current[k] = bool(v)
+                    elif isinstance(current[k], int):
+                        try:
+                            current[k] = int(v)
+                        except (ValueError, TypeError):
+                            continue
+                    elif isinstance(current[k], str):
+                        current[k] = str(v)
+            try:
+                self._settings_path.write_text(
+                    json.dumps(current, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except OSError:
+                return current
+            return current
 
     def upsert_chat(
         self,
@@ -392,6 +457,81 @@ class VaultDB:
             "file_name": file_name,
             "bookmarked": bool(bookmarked),
         }
+
+    def upsert_messages_batch(self, messages_data: list[dict]) -> int:
+        """Batch insert or update message records in a single SQLite transaction."""
+        if not messages_data:
+            return 0
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        rows_to_insert = []
+        chats_to_touch: dict[str, int] = {}
+        fts_rows = []
+
+        for m in messages_data:
+            m_id = str(m.get("message_id") or "")
+            if not m_id:
+                continue
+            c_id = str(m.get("chat_id") or "")
+            s_id = str(m.get("sender_id") or "")
+            s_name = str(m.get("sender_name") or "")
+            ts_ms = int(m.get("timestamp_ms") or 0)
+            c_type = str(m.get("content_type") or "text")
+            text = str(m.get("text_content") or "")
+            m_status = str(m.get("media_status") or "none")
+            f_name = str(m.get("file_name") or "")
+            raw_meta = m.get("raw_metadata") or {}
+            meta_str = json.dumps(raw_meta, ensure_ascii=False) if isinstance(raw_meta, dict) else str(raw_meta)
+            bm = 1 if m.get("bookmarked") else 0
+
+            rows_to_insert.append((
+                m_id, c_id, s_id, s_name, ts_ms, c_type, text,
+                m_status, f_name, meta_str, bm, now_iso,
+            ))
+            if c_id:
+                chats_to_touch[c_id] = max(chats_to_touch.get(c_id, 0), ts_ms)
+            if self.has_fts5:
+                fts_rows.append((m_id, c_id, text, s_name, f_name))
+
+        with self._lock, self._conn:
+            cur = self._conn.cursor()
+            cur.executemany(
+                """
+                INSERT INTO messages (
+                    message_id, chat_id, sender_id, sender_name,
+                    timestamp_ms, content_type, text_content,
+                    media_status, file_name, raw_metadata, bookmarked, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id) DO UPDATE SET
+                    media_status = excluded.media_status,
+                    file_name = CASE WHEN excluded.file_name != '' THEN excluded.file_name ELSE messages.file_name END,
+                    raw_metadata = excluded.raw_metadata;
+                """,
+                rows_to_insert,
+            )
+            for cid, max_ts in chats_to_touch.items():
+                cur.execute(
+                    """
+                    UPDATE chats
+                    SET last_message_at = MAX(last_message_at, ?),
+                        updated_at = ?
+                    WHERE chat_id = ?;
+                    """,
+                    (max_ts, now_iso, cid),
+                )
+            if self.has_fts5 and fts_rows:
+                try:
+                    for fts_item in fts_rows:
+                        cur.execute("DELETE FROM messages_fts WHERE message_id = ?;", (fts_item[0],))
+                        cur.execute(
+                            """
+                            INSERT INTO messages_fts (message_id, chat_id, text_content, sender_name, file_name)
+                            VALUES (?, ?, ?, ?, ?);
+                            """,
+                            fts_item,
+                        )
+                except sqlite3.Error:
+                    self.has_fts5 = False
+        return len(rows_to_insert)
 
     def toggle_message_bookmark(
         self,

@@ -1,5 +1,6 @@
 """AI and rule-based chat analyzer for extracting action items, summaries, and smart replies."""
 
+import datetime
 import re
 
 from line_vault.db import VaultDB
@@ -193,6 +194,22 @@ class ChatAnalyzer:
                 })
 
         # 3. Summary generation
+        ts_list = [int(m["timestamp_ms"]) for m in messages if m.get("timestamp_ms")]
+        if ts_list:
+            min_ts = min(ts_list)
+            max_ts = max(ts_list)
+            try:
+                dt_start = datetime.datetime.fromtimestamp(min_ts / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+                dt_end = datetime.datetime.fromtimestamp(max_ts / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+                date_range_str = f"{dt_start} 至 {dt_end}" if dt_start != dt_end else dt_start
+                date_range_en = f"{dt_start} to {dt_end}" if dt_start != dt_end else dt_start
+            except (ValueError, OSError, OverflowError):
+                date_range_str = "全時間範圍"
+                date_range_en = "all time"
+        else:
+            date_range_str = "全時間範圍"
+            date_range_en = "all time"
+
         if is_en:
             senders_str = ", ".join(list(senders)[:5]) if senders else "Team members"
             key_topics = []
@@ -214,7 +231,7 @@ class ChatAnalyzer:
                 else ", and all files are safely preserved"
             )
             summary = (
-                f"Chat '{chat_name}' has accumulated {len(messages)} messages with key participants including {senders_str}. "
+                f"Covering message history from {date_range_en} (unlimited all-time analysis), Chat '{chat_name}' has accumulated {len(messages)} messages with key participants including {senders_str}. "
                 f"Core topics cover {topics_str}. A total of {media_count} media and file attachments were exchanged, "
                 f"with {archived_count} permanently secured in the local vault{file_note}."
             )
@@ -234,7 +251,7 @@ class ChatAnalyzer:
 
             topics_str = "、".join(key_topics)
             summary = (
-                f"本聊天室「{chat_name}」累計 {len(messages)} 則對話，主要參與者包含 {senders_str}。"
+                f"本聊天室「{chat_name}」對話時間範圍自 {date_range_str}（完整無上限分析），累計 {len(messages)} 則對話，主要參與者包含 {senders_str}。"
                 f"探討重點涵蓋 {topics_str}。共流通 {media_count} 個媒體與檔案附件，"
                 f"其中 {archived_count} 個已完成防過期永久金庫留存"
                 f"{f'，仍有 {pending_count} 個檔案需留意快取狀態' if pending_count > 0 else '，所有檔案保存狀態良好'}。"
