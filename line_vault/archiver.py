@@ -2,7 +2,12 @@
 
 import hashlib
 import io
+import json
+import os
 import re
+import sqlite3
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -120,7 +125,7 @@ class MediaArchiver:
                     source_role="original",
                 )
                 return {"status": "archived", "media": record, "source_cache": str(cand)}
-            except Exception:
+            except (ValueError, OSError, sqlite3.Error):
                 continue
 
         # If original not yet in cache, check if thumbnail exists
@@ -133,7 +138,7 @@ class MediaArchiver:
                     # Check if thumb is encrypted or plaintext
                     try:
                         thumb_decrypted = decrypt_e2ee_media(t_data, material_b64)
-                    except Exception:
+                    except ValueError:
                         thumb_decrypted = t_data
 
                     info = sniff_media_format(thumb_decrypted, fallback_filename or "thumb.jpg")
@@ -182,7 +187,7 @@ class MediaArchiver:
                         "media": record,
                         "pending_original": True,
                     }
-                except Exception as exc:
+                except (ValueError, OSError, sqlite3.Error) as exc:
                     return {
                         "status": "thumbnail_error",
                         "message_id": message_id,
@@ -275,6 +280,197 @@ class MediaArchiver:
             "edb_databases_found": edb_files,
             "files_inspected": files_inspected,
             "media_imported": media_imported,
+        }
+
+    def sync_from_mcp_reader(
+        self,
+        chat_name: str | None = None,
+        days: int = 14,
+        analyzer=None,
+        reader_script: Path | str | None = None,
+        cache_root: Path | str | None = None,
+        runner=None,
+    ) -> dict:
+        """Bridge with line-desktop-mcp encrypted .edb / WAL reader.
+
+        Extracts chats, messages, and key materials, then uses scan_and_archive_line_cache
+        to permanently save media from local LINE cache before expiration.
+        """
+        if reader_script is not None:
+            resolved_reader = Path(reader_script).resolve()
+        else:
+            env_reader = os.environ.get("LINE_VAULT_READER_SCRIPT")
+            if env_reader:
+                resolved_reader = Path(env_reader).resolve()
+            else:
+                resolved_reader = Path("C:/GitHub/line-desktop-mcp/src/extensions/python/line-reader.py").resolve()
+
+        python_exe = os.environ.get("LINE_MCP_PYTHON", sys.executable)
+
+        if cache_root is not None:
+            resolved_cache_root = Path(cache_root).resolve()
+        else:
+            local_appdata = os.environ.get("LOCALAPPDATA", "")
+            resolved_cache_root = (
+                Path(local_appdata) / "LINE" / "Data"
+                if local_appdata
+                else Path("vault_data/cache")
+            )
+
+        if runner is None:
+            if not resolved_reader.is_file():
+                return {
+                    "status": "reader_not_configured",
+                    "chats_synced": 0,
+                    "messages_synced": 0,
+                    "media_archived": 0,
+                }
+
+            def default_runner(action: str, extra_args: list[str]) -> dict:
+                cmd = [python_exe, str(resolved_reader), action, *extra_args]
+                payload = {}
+                if action == "recent":
+                    days_val = int(extra_args[0]) if extra_args and extra_args[0].isdigit() else days
+                    payload = {"action": "recent", "days": days_val}
+                elif action == "messages":
+                    c_name = extra_args[0] if extra_args else (chat_name or "")
+                    days_val = int(extra_args[1]) if len(extra_args) > 1 and extra_args[1].isdigit() else days
+                    payload = {"action": "messages", "chatName": c_name, "days": days_val}
+                input_str = json.dumps(payload)
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        input=input_str,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=30,
+                        check=False,
+                    )
+                    out = proc.stdout.strip()
+                    if out:
+                        return json.loads(out)
+                except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
+                    pass
+                return {}
+
+            exec_runner = default_runner
+        else:
+            exec_runner = runner
+
+        recent_res = exec_runner("recent", [str(days)])
+        all_recent: list[dict] = []
+        if isinstance(recent_res, dict):
+            all_recent = recent_res.get("recentChats") or recent_res.get("chats") or []
+        elif isinstance(recent_res, list):
+            all_recent = recent_res
+
+        chats_to_sync: list[dict] = []
+        if chat_name:
+            matched = [
+                c for c in all_recent
+                if (c.get("chatName") or c.get("name")) == chat_name
+            ]
+            chats_to_sync = matched if matched else [{"chatName": chat_name, "chatType": "group"}]
+        else:
+            chats_to_sync = all_recent
+
+        chats_synced_count = 0
+        messages_synced_count = 0
+        media_archived_count = 0
+        synced_chat_ids: list[str] = []
+
+        for ch in chats_to_sync:
+            c_name = ch.get("chatName") or ch.get("name") or (chat_name if chat_name else "未命名聊天室")
+            c_id = ch.get("chatId") or ch.get("id") or f"c_{hashlib.md5(c_name.encode('utf-8')).hexdigest()[:12]}"
+            c_type = ch.get("chatType") or ch.get("type") or "group"
+            unread = int(ch.get("unreadCount") or 0)
+
+            self.db.upsert_chat(
+                chat_id=c_id,
+                chat_name=c_name,
+                chat_type=c_type,
+                monitored=True,
+                unread_count=unread,
+            )
+            chats_synced_count += 1
+            synced_chat_ids.append(c_id)
+
+            msg_res = exec_runner("messages", [c_name, str(days), "--include-media-meta"])
+            raw_msgs = []
+            if isinstance(msg_res, dict):
+                raw_msgs = msg_res.get("messages") or []
+            elif isinstance(msg_res, list):
+                raw_msgs = msg_res
+
+            for msg in raw_msgs:
+                msg_id = (
+                    msg.get("id")
+                    or msg.get("messageId")
+                    or f"m_{hashlib.md5(str(msg).encode('utf-8')).hexdigest()[:12]}"
+                )
+                sender_name = msg.get("sender") or msg.get("senderName") or "成員"
+                sender_id = msg.get("senderId") or ""
+                text = msg.get("text") or msg.get("content") or ""
+                c_type_msg = msg.get("type") or ("image" if msg.get("isImage") else "text")
+                ts_ms = int(msg.get("timestampMs") or msg.get("timestamp") or 0)
+                if ts_ms < 10000000000:
+                    ts_ms *= 1000
+
+                file_name = msg.get("fileName") or ""
+                thumb_path = msg.get("thumbPath")
+
+                key_material = msg.get("keyMaterial")
+                declared_bytes = msg.get("declaredBytes")
+                if not key_material and isinstance(msg.get("media"), dict):
+                    media_dict = msg["media"]
+                    key_material = media_dict.get("keyMaterial")
+                    declared_bytes = media_dict.get("declaredBytes")
+                    file_name = file_name or media_dict.get("fileName") or ""
+                    thumb_path = thumb_path or media_dict.get("thumbPath")
+
+                initial_status = "none"
+                if key_material and declared_bytes:
+                    initial_status = "pending"
+
+                self.db.upsert_message(
+                    message_id=msg_id,
+                    chat_id=c_id,
+                    sender_id=sender_id,
+                    sender_name=sender_name,
+                    timestamp_ms=ts_ms,
+                    content_type=c_type_msg,
+                    text_content=text,
+                    media_status=initial_status,
+                    file_name=file_name,
+                )
+                messages_synced_count += 1
+
+                if key_material and declared_bytes:
+                    scan_res = self.scan_and_archive_line_cache(
+                        chat_id=c_id,
+                        message_id=msg_id,
+                        cache_root=resolved_cache_root,
+                        material_b64=key_material,
+                        declared_bytes=int(declared_bytes),
+                        fallback_filename=file_name,
+                        thumb_path=thumb_path,
+                    )
+                    if scan_res.get("status") == "archived":
+                        media_archived_count += 1
+
+        if analyzer:
+            for cid in synced_chat_ids:
+                try:
+                    analyzer.analyze_chat(cid)
+                except (ValueError, sqlite3.Error):
+                    continue
+
+        return {
+            "status": "ok",
+            "chats_synced": chats_synced_count,
+            "messages_synced": messages_synced_count,
+            "media_archived": media_archived_count,
         }
 
     def seed_demo_data(self, analyzer=None) -> dict:

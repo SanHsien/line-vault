@@ -1,6 +1,7 @@
 """Cryptographic utilities for LINE E2EE media decryption, authentication, and sniffing."""
 
 import base64
+import binascii
 import hashlib
 import hmac
 import os
@@ -25,7 +26,7 @@ def derive_media_keys(material_b64: str) -> tuple[bytes, bytes, bytes]:
 
     try:
         raw_material = base64.b64decode(material_b64.strip(), validate=True)
-    except Exception as exc:
+    except (ValueError, binascii.Error) as exc:
         raise ValueError("MEDIA_KEY_UNAVAILABLE") from exc
 
     if len(raw_material) != 32:

@@ -6,14 +6,16 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout repository
@@ -31,10 +33,10 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Lint with ruff
+      - name: Run Windows Dev Check
         run: |
-          ruff check . --select E9,F
+          pwsh -NoProfile -File tools/dev_check.ps1
 
-      - name: Run test suite
+      - name: Run Windows Product Test Suite
         run: |
-          pytest -v tests/
+          pwsh -NoProfile -File tools/test_product.ps1

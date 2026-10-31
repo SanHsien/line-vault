@@ -56,7 +56,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length)
         try:
             return json.loads(body.decode("utf-8"))
-        except Exception:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return {}
 
     def do_GET(self) -> None:
@@ -216,6 +216,17 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         # POST /api/scan-line
         if path == "/api/scan-line":
             body = self._read_json_body()
+            if body.get("use_mcp_reader"):
+                sync_res = self.archiver.sync_from_mcp_reader(
+                    chat_name=body.get("chat_name"),
+                    days=int(body.get("days", 14)),
+                    analyzer=self.analyzer,
+                    reader_script=body.get("reader_script"),
+                    cache_root=body.get("cache_dir"),
+                )
+                stats = self.db.get_dashboard_stats()
+                return self._send_json({"success": True, "sync_result": sync_res, "stats": stats})
+
             custom_dir = body.get("cache_dir", "")
             if not custom_dir:
                 local_appdata = os.environ.get("LOCALAPPDATA", "")
@@ -227,6 +238,23 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             scan_res = self.archiver.scan_local_line_directory(custom_dir, analyzer=self.analyzer)
             stats = self.db.get_dashboard_stats()
             return self._send_json({"success": True, "scan_result": scan_res, "stats": stats})
+
+        # POST /api/sync-mcp
+        if path == "/api/sync-mcp":
+            body = self._read_json_body()
+            chat_name = body.get("chat_name")
+            days = int(body.get("days", 14))
+            reader_script = body.get("reader_script")
+            cache_dir = body.get("cache_dir")
+            sync_res = self.archiver.sync_from_mcp_reader(
+                chat_name=chat_name,
+                days=days,
+                analyzer=self.analyzer,
+                reader_script=reader_script,
+                cache_root=cache_dir,
+            )
+            stats = self.db.get_dashboard_stats()
+            return self._send_json({"success": True, "sync_result": sync_res, "stats": stats})
 
         return self._send_error("Not Found", status=404)
 
@@ -327,7 +355,7 @@ def run_server(
     if open_browser:
         try:
             webbrowser.open(url)
-        except Exception:
+        except webbrowser.Error:
             pass
 
     try:

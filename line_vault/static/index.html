@@ -43,13 +43,13 @@
         </div>
       </div>
       <div class="header-actions">
-        <button id="btnScanLine" class="btn btn-outline" title="掃描本機 Windows LINE 資料夾並將快取媒體永久歸檔">
-          <span class="btn-icon">🔄</span> 掃描本機 LINE
+        <button id="btnOpenSettings" class="btn btn-secondary" title="開啟金庫與同步設定視窗">
+          <span class="btn-icon">⚙️</span> 金庫與同步設定
         </button>
         <button id="btnAnalyzeAll" class="btn btn-primary" title="重新分析所有已監控聊天室">
           <span class="btn-icon">⚡</span> 重新分析全部
         </button>
-        <button id="btnSeedDemo" class="btn btn-secondary" title="載入真實範例對話、相片、影片與合約檔案">
+        <button id="btnSeedDemo" class="btn btn-outline" title="載入真實範例對話、相片、影片與合約檔案">
           <span class="btn-icon">✨</span> 載入範例資料
         </button>
       </div>
@@ -77,7 +77,6 @@
       </div>
 
       <div class="chat-list" id="chatListContainer">
-        <!-- Rendered by app.js -->
         <div class="loading-state">載入中...</div>
       </div>
     </aside>
@@ -152,7 +151,6 @@
       </div>
 
       <div class="insight-scroll-wrap" id="insightContainer">
-        <!-- Rendered by app.js -->
         <div class="empty-state">
           <div class="empty-icon">🤖</div>
           <h3>尚無分析資料</h3>
@@ -161,6 +159,72 @@
       </div>
     </aside>
   </main>
+
+  <!-- Settings & Sync Modal -->
+  <div id="settingsModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>⚙️ 金庫環境與 LINE 資料庫同步設定</h3>
+        <button id="btnCloseSettings" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-status-grid">
+          <div class="settings-status-item">
+            <span class="label">金庫資料目錄：</span>
+            <code id="settingsVaultDir" class="val">載入中...</code>
+          </div>
+          <div class="settings-status-item">
+            <span class="label">FTS5 全文索引：</span>
+            <span id="settingsFts5" class="val tag-green">檢查中...</span>
+          </div>
+          <div class="settings-status-item">
+            <span class="label">Windows LINE 偵測：</span>
+            <span id="settingsLineStatus" class="val tag-blue">檢查中...</span>
+          </div>
+        </div>
+
+        <div class="settings-form-group">
+          <label>LINE 快取與資料目錄 (可留空使用預設路徑)：</label>
+          <input type="text" id="inputLineDataDir" placeholder="%LOCALAPPDATA%\LINE\Data" />
+        </div>
+
+        <div class="settings-form-group">
+          <label>line-desktop-mcp 讀取引擎腳本路徑：</label>
+          <input type="text" id="inputReaderScript" placeholder="C:\GitHub\line-desktop-mcp\src\extensions\python\line-reader.py" />
+        </div>
+
+        <div class="settings-form-row">
+          <div class="settings-form-group" style="flex: 1;">
+            <label>讀取近幾天對話紀錄：</label>
+            <input type="number" id="inputSyncDays" value="14" min="1" max="90" />
+          </div>
+          <div class="settings-form-group" style="flex: 2;">
+            <label>指定聊天室名稱 (留空則同步最近全部聊天室)：</label>
+            <input type="text" id="inputTargetChatName" placeholder="例如：客戶交付專案群" />
+          </div>
+        </div>
+
+        <div class="settings-actions-group">
+          <button id="btnModalSyncMcp" class="btn btn-primary">
+            <span>🔐 同步 LINE 加密資料庫 (MCP)</span>
+          </button>
+          <button id="btnModalScanLine" class="btn btn-secondary">
+            <span>🔄 掃描本機 LINE 快取資料夾</span>
+          </button>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-auto-poll-wrap">
+          <label class="toggle-switch-label">
+            <input type="checkbox" id="toggleAutoPoll">
+            <span class="toggle-slider"></span>
+            <span class="toggle-text">⏱️ 背景自動巡檢與防過期備份（每 5 分鐘自動巡檢並刷新分析）</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>

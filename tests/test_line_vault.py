@@ -12,6 +12,7 @@ import pytest
 
 from line_vault.analyzer import ChatAnalyzer
 from line_vault.archiver import MediaArchiver
+from line_vault.cli import find_system_app_browser
 from line_vault.crypto import (
     decrypt_e2ee_media,
     derive_media_keys,
@@ -395,6 +396,88 @@ def test_archiver_scan_line_cache(tmp_path: Path):
     db.close()
 
 
+def test_archiver_sync_from_mcp_reader(tmp_path: Path):
+    """Verify bridge synchronization from line-desktop-mcp reader with cache archiving."""
+    vault_dir = tmp_path / "vault_mcp"
+    cache_root = tmp_path / "line_cache"
+    db = VaultDB(vault_dir / "vault.db")
+    archiver = MediaArchiver(vault_dir, db)
+    analyzer = ChatAnalyzer(db)
+
+    chat_id = "c_mcp_test"
+    chat_name = "MCP專案協作群"
+    photo_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+    key = generate_key_material()
+    enc_photo = encrypt_e2ee_media(photo_bytes, key)
+
+    # Place encrypted payload in cache
+    chat_hash = hashlib.sha1(chat_id.encode("utf-8")).hexdigest()
+    m_dir = cache_root / "bucket_1" / chat_hash / "m"
+    m_dir.mkdir(parents=True, exist_ok=True)
+    with open(m_dir / "photo.dat", "wb") as f:
+        f.write(enc_photo)
+
+    def mock_runner(action: str, extra_args: list[str]) -> dict:
+        if action == "recent":
+            return {
+                "recentChats": [
+                    {
+                        "chatId": chat_id,
+                        "chatName": chat_name,
+                        "chatType": "group",
+                        "unreadCount": 1,
+                    }
+                ]
+            }
+        if action == "messages":
+            return {
+                "messages": [
+                    {
+                        "id": "msg_mcp_01",
+                        "sender": "客戶代表",
+                        "text": "請於本週五前確認報價單，金額為 NT$ 88,000 元。",
+                        "type": "image",
+                        "timestampMs": 1730008000000,
+                        "fileName": "quote_spec.png",
+                        "keyMaterial": key,
+                        "declaredBytes": len(photo_bytes),
+                    }
+                ]
+            }
+        return {}
+
+    sync_result = archiver.sync_from_mcp_reader(
+        chat_name=chat_name,
+        days=14,
+        analyzer=analyzer,
+        cache_root=cache_root,
+        runner=mock_runner,
+    )
+
+    assert sync_result["status"] == "ok"
+    assert sync_result["chats_synced"] == 1
+    assert sync_result["messages_synced"] == 1
+    assert sync_result["media_archived"] == 1
+
+    # Verify chat was created & monitored
+    chat = db.get_chat(chat_id)
+    assert chat is not None
+    assert chat["monitored"] is True
+
+    # Verify media was decrypted and saved to vault
+    saved_media = db.list_media(chat_id=chat_id)
+    assert len(saved_media) == 1
+    assert saved_media[0]["size_bytes"] == len(photo_bytes)
+    assert (vault_dir / saved_media[0]["vault_rel_path"]).read_bytes() == photo_bytes
+
+    # Verify AI insight was generated
+    insight = db.get_latest_insight(chat_id)
+    assert insight is not None
+    assert len(insight["action_items"]) >= 1
+
+    db.close()
+
+
 def test_archiver_seed_demo_data(tmp_path: Path):
     """Verify demo data seeding creates chats, messages, and encrypted attachments."""
     vault_dir = tmp_path / "vault_demo"
@@ -609,7 +692,20 @@ def test_server_rest_api_endpoints(tmp_path: Path):
             assert scan_payload["scan_result"]["media_imported"] == 1
             assert "chat.edb" in scan_payload["scan_result"]["edb_databases_found"]
 
-        # 14. Path traversal protection test
+        # 14. POST /api/sync-mcp endpoint check
+        req_sync = urllib.request.Request(
+            f"{base_url}/api/sync-mcp",
+            data=json.dumps({"days": 7}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_sync) as res:
+            assert res.status == 200
+            sync_data = json.loads(res.read().decode("utf-8"))
+            assert sync_data["success"] is True
+            assert "sync_result" in sync_data
+
+        # 15. Path traversal protection test
         with pytest.raises(urllib.error.HTTPError) as exc_info:
             urllib.request.urlopen(f"{base_url}/api/media/file/../../../../etc/passwd")
         assert exc_info.value.code in (403, 404)
@@ -627,4 +723,11 @@ def test_gitignore_safety_contract():
     content = gitignore_path.read_text(encoding="utf-8")
     for pattern in ("vault_data/", "*.edb", "*.key", ".env"):
         assert pattern in content
+
+
+def test_find_system_app_browser():
+    """Verify system app browser search behaves safely on Windows and non-Windows."""
+    result = find_system_app_browser()
+    assert result is None or (isinstance(result, str) and len(result) > 0)
+
 

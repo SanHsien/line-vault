@@ -24,6 +24,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnAnalyzeAll = document.getElementById("btnAnalyzeAll");
   const btnSeedDemo = document.getElementById("btnSeedDemo");
   const btnRefreshAnalysis = document.getElementById("btnRefreshAnalysis");
+  const btnOpenSettings = document.getElementById("btnOpenSettings");
+
+  // Settings Modal Elements
+  const settingsModal = document.getElementById("settingsModal");
+  const btnCloseSettings = document.getElementById("btnCloseSettings");
+  const settingsVaultDir = document.getElementById("settingsVaultDir");
+  const settingsFts5 = document.getElementById("settingsFts5");
+  const settingsLineStatus = document.getElementById("settingsLineStatus");
+  const inputLineDataDir = document.getElementById("inputLineDataDir");
+  const inputReaderScript = document.getElementById("inputReaderScript");
+  const inputSyncDays = document.getElementById("inputSyncDays");
+  const inputTargetChatName = document.getElementById("inputTargetChatName");
+  const btnModalSyncMcp = document.getElementById("btnModalSyncMcp");
+  const btnModalScanLine = document.getElementById("btnModalScanLine");
+  const toggleAutoPoll = document.getElementById("toggleAutoPoll");
 
   const chatListContainer = document.getElementById("chatListContainer");
   const chatCountBadge = document.getElementById("chatCountBadge");
@@ -712,6 +727,194 @@ document.addEventListener("DOMContentLoaded", () => {
       loadChatInsight(currentChatId);
     }
   });
+
+  // 10. Settings & Sync Modal Handlers
+  if (btnOpenSettings && settingsModal) {
+    btnOpenSettings.addEventListener("click", async () => {
+      settingsModal.style.display = "flex";
+      // Fill stored preferences
+      inputLineDataDir.value = localStorage.getItem("line_vault_line_data_dir") || "";
+      inputReaderScript.value = localStorage.getItem("line_vault_reader_script") || "";
+      inputSyncDays.value = localStorage.getItem("line_vault_sync_days") || "14";
+      inputTargetChatName.value = localStorage.getItem("line_vault_target_chat") || "";
+      toggleAutoPoll.checked = localStorage.getItem("line_vault_auto_poll") === "true";
+
+      // Refresh status info
+      try {
+        const res = await fetch("/api/status");
+        if (res.ok) {
+          const data = await res.json();
+          settingsVaultDir.textContent = data.vault_dir || "vault_data";
+          settingsFts5.textContent = data.fts5_enabled ? "已啟用 (毫秒級搜尋)" : "未支援 (使用 LIKE 模式)";
+          settingsLineStatus.textContent = data.line_detected ? "已偵測到本機 LINE" : "未偵測到 (可手動指定路徑)";
+          if (!inputLineDataDir.value && data.line_path) {
+            inputLineDataDir.value = data.line_path;
+          }
+        }
+      } catch (e) {
+        settingsVaultDir.textContent = "無法取得狀態";
+      }
+    });
+
+    btnCloseSettings.addEventListener("click", () => {
+      settingsModal.style.display = "none";
+    });
+
+    settingsModal.addEventListener("click", (e) => {
+      if (e.target === settingsModal) {
+        settingsModal.style.display = "none";
+      }
+    });
+  }
+
+  // Sync MCP Button in Modal
+  if (btnModalSyncMcp) {
+    btnModalSyncMcp.addEventListener("click", async () => {
+      btnModalSyncMcp.disabled = true;
+      btnModalSyncMcp.innerHTML = "<span>⏳</span> 正在解密同步中...";
+
+      const chatName = inputTargetChatName.value.trim() || null;
+      const days = parseInt(inputSyncDays.value || "14", 10);
+      const readerScript = inputReaderScript.value.trim() || null;
+      const cacheDir = inputLineDataDir.value.trim() || null;
+
+      // Persist preferences
+      localStorage.setItem("line_vault_line_data_dir", inputLineDataDir.value.trim());
+      localStorage.setItem("line_vault_reader_script", inputReaderScript.value.trim());
+      localStorage.setItem("line_vault_sync_days", days.toString());
+      localStorage.setItem("line_vault_target_chat", inputTargetChatName.value.trim());
+
+      try {
+        const res = await fetch("/api/sync-mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_name: chatName,
+            days: days,
+            reader_script: readerScript,
+            cache_dir: cacheDir,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const sr = data.sync_result || {};
+          if (sr.status === "reader_not_configured") {
+            showToast("找不到 line-desktop-mcp 讀取腳本，請確認路徑或先掃描快取", "⚠️");
+          } else {
+            showToast(
+              `MCP 同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
+              "🔐"
+            );
+            await fetchStatus();
+            await fetchChats();
+            if (chatsCache.length > 0 && !currentChatId) {
+              selectChat(chatsCache[0]);
+            } else if (currentChatId) {
+              loadCenterContent();
+              loadChatInsight(currentChatId);
+            }
+          }
+        } else {
+          showToast(data.error || "同步失敗，請檢查設定與 LINE 程序", "❌");
+        }
+      } catch (err) {
+        showToast("同步出錯: " + err.message, "❌");
+      } finally {
+        btnModalSyncMcp.disabled = false;
+        btnModalSyncMcp.innerHTML = "<span>🔐 同步 LINE 加密資料庫 (MCP)</span>";
+      }
+    });
+  }
+
+  // Scan Line Cache Button in Modal
+  if (btnModalScanLine) {
+    btnModalScanLine.addEventListener("click", async () => {
+      btnModalScanLine.disabled = true;
+      btnModalScanLine.innerHTML = "<span>⏳</span> 正在掃描快取...";
+
+      const cacheDir = inputLineDataDir.value.trim() || "";
+      localStorage.setItem("line_vault_line_data_dir", cacheDir);
+
+      try {
+        const res = await fetch("/api/scan-line", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cache_dir: cacheDir }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const sr = data.scan_result || {};
+          showToast(
+            `快取掃描完成：檢查 ${sr.files_inspected || 0} 檔、歸檔 ${sr.media_imported || 0} 件媒體！`,
+            "🔄"
+          );
+          await fetchStatus();
+          await fetchChats();
+          if (chatsCache.length > 0 && !currentChatId) {
+            selectChat(chatsCache[0]);
+          } else if (currentChatId) {
+            loadCenterContent();
+          }
+        } else {
+          showToast(data.error || "找不到指定的快取目錄", "⚠️");
+        }
+      } catch (err) {
+        showToast("快取掃描出錯: " + err.message, "❌");
+      } finally {
+        btnModalScanLine.disabled = false;
+        btnModalScanLine.innerHTML = "<span>🔄 掃描本機 LINE 快取資料夾</span>";
+      }
+    });
+  }
+
+  // Auto-poll Timer
+  let autoPollInterval = null;
+  function updateAutoPollSchedule(enabled) {
+    if (autoPollInterval) {
+      clearInterval(autoPollInterval);
+      autoPollInterval = null;
+    }
+    if (enabled) {
+      // Run every 5 minutes (300,000 ms)
+      autoPollInterval = setInterval(async () => {
+        const cacheDir = localStorage.getItem("line_vault_line_data_dir") || "";
+        const readerScript = localStorage.getItem("line_vault_reader_script") || "";
+        const days = parseInt(localStorage.getItem("line_vault_sync_days") || "14", 10);
+        try {
+          await fetch("/api/sync-mcp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              days: days,
+              reader_script: readerScript || null,
+              cache_dir: cacheDir || null,
+            }),
+          });
+          await fetchStatus();
+          await fetchChats();
+          if (currentChatId) {
+            loadChatInsight(currentChatId);
+          }
+        } catch (e) {
+          // Background polling silent error recovery
+        }
+      }, 300000);
+    }
+  }
+
+  if (toggleAutoPoll) {
+    toggleAutoPoll.addEventListener("change", (e) => {
+      const isChecked = e.target.checked;
+      localStorage.setItem("line_vault_auto_poll", isChecked ? "true" : "false");
+      updateAutoPollSchedule(isChecked);
+      showToast(isChecked ? "已啟用每 5 分鐘背景自動巡檢與防過期備份" : "已關閉背景自動巡檢", isChecked ? "⏱️" : "⏸️");
+    });
+
+    if (localStorage.getItem("line_vault_auto_poll") === "true") {
+      toggleAutoPoll.checked = true;
+      updateAutoPollSchedule(true);
+    }
+  }
 
   // Initial Load
   fetchStatus();

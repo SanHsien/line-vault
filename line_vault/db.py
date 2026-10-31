@@ -129,7 +129,7 @@ class VaultDB:
                     """
                 )
                 self.has_fts5 = True
-            except Exception:
+            except sqlite3.OperationalError:
                 self.has_fts5 = False
 
     def close(self) -> None:
@@ -446,7 +446,7 @@ class VaultDB:
                 else:
                     return None
             return int(dt.timestamp() * 1000)
-        except Exception:
+        except (ValueError, TypeError, OverflowError):
             return None
 
     def search_messages(
@@ -496,7 +496,7 @@ class VaultDB:
                     )
                     rows = cur.fetchall()
                     matched_msg_ids = [r[0] for r in rows]
-                except Exception:
+                except sqlite3.OperationalError:
                     matched_msg_ids = None
 
             if matched_msg_ids:
@@ -549,7 +549,7 @@ class VaultDB:
                 d = dict(r)
                 try:
                     d["raw_metadata"] = json.loads(d.get("raw_metadata") or "{}")
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     d["raw_metadata"] = {}
                 results.append(d)
             return results
@@ -670,15 +670,15 @@ class VaultDB:
             res = dict(row)
             try:
                 res["action_items"] = json.loads(res.get("action_items") or "[]")
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 res["action_items"] = []
             try:
                 res["suggested_replies"] = json.loads(res.get("suggested_replies") or "[]")
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 res["suggested_replies"] = []
             try:
                 res["important_files"] = json.loads(res.get("important_files") or "[]")
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 res["important_files"] = []
             return res
 
