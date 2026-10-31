@@ -43,6 +43,9 @@
         </div>
       </div>
       <div class="header-actions">
+        <button id="btnOpenAbout" class="btn btn-outline" title="關於 LINE Vault、檢查更新與 GitHub 網站">
+          <span class="btn-icon">ℹ️</span> <span id="txtBtnAbout">關於</span>
+        </button>
         <button id="btnOpenHelp" class="btn btn-outline" title="查看快速開始與測試指南">
           <span class="btn-icon">❓</span> <span id="txtBtnHelp">使用說明</span>
         </button>
@@ -60,6 +63,9 @@
         </button>
         <button id="btnSeedDemo" class="btn btn-accent" title="一鍵載入範例對話、相片、影片與合約檔案以立即測試">
           <span class="btn-icon">✨</span> <span id="txtBtnSeedDemo">載入範例資料</span>
+        </button>
+        <button id="btnClearDemo" class="btn btn-outline" title="一鍵清除所有測試範例資料 (保留您真實的 LINE 資料)">
+          <span class="btn-icon">🗑️</span> <span id="txtBtnClearDemo">清除範例</span>
         </button>
       </div>
     </div>
@@ -104,6 +110,9 @@
         <div class="center-header-actions" style="display:flex;align-items:center;gap:10px;">
           <button id="btnExportReport" class="btn btn-sm btn-outline" title="匯出 Markdown 或 JSON 報告" disabled>
             <span class="btn-icon">📥</span> <span id="txtExportReport">匯出報告</span>
+          </button>
+          <button id="btnDeleteChat" class="btn btn-sm btn-outline" title="刪除此聊天室與其歸檔紀錄" style="color:var(--accent-red);border-color:rgba(239,68,68,0.35);" disabled>
+            <span class="btn-icon">🗑️</span> <span id="txtDeleteChat">刪除聊天室</span>
           </button>
           <div class="chat-monitor-toggle-wrap">
             <label class="toggle-switch-label">
@@ -322,6 +331,69 @@
               </ul>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- About & Update Modal -->
+  <div id="aboutModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="aboutModalTitle">ℹ️ 關於 LINE Vault 與版本更新</h3>
+        <button id="btnCloseAbout" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="onboarding-card" style="margin-bottom:14px;">
+          <div class="onboarding-header">
+            <span class="onboarding-header-icon">🛡️</span>
+            <div>
+              <h3 id="aboutAppName">LINE Vault — 本地對話與防過期媒體中心</h3>
+              <p id="aboutAppSubtitle">Windows 11 / 10 x64 原生純桌面對話金庫與 E2EE 防過期媒體備份中心</p>
+            </div>
+          </div>
+          <div class="settings-status-grid" style="margin-top:12px;">
+            <div class="settings-status-item">
+              <span class="label">目前版本：</span>
+              <span class="val tag-green" id="aboutVersion">v1.0.0</span>
+            </div>
+            <div class="settings-status-item">
+              <span class="label">開發作者：</span>
+              <span class="val" id="aboutAuthor">SanHsien</span>
+            </div>
+            <div class="settings-status-item">
+              <span class="label">開源授權：</span>
+              <span class="val" id="aboutLicense">MIT License</span>
+            </div>
+            <div class="settings-status-item">
+              <span class="label">GitHub 專案：</span>
+              <a href="https://github.com/SanHsien/line-vault" target="_blank" id="aboutRepoLink" class="val" style="color:var(--accent-blue);text-decoration:underline;">SanHsien/line-vault</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-form-group">
+          <label>📦 版本更新狀態與一鍵下載：</label>
+          <div id="updateStatusBox" style="padding:10px 12px;border-radius:8px;background:var(--bg-card);border:1px solid var(--border-color);font-size:12px;line-height:1.6;">
+            點擊下方「🔄 檢查更新」即可連線至 GitHub Releases 檢查是否有新版本發布。
+          </div>
+        </div>
+
+        <div class="settings-actions-group" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+          <button id="btnCheckUpdate" class="btn btn-primary" style="flex:1;">
+            <span>🔄 檢查更新</span>
+          </button>
+          <button id="btnDownloadUpdate" class="btn btn-accent" style="flex:1;">
+            <span>⬇️ 一鍵下載最新執行檔至 Downloads</span>
+          </button>
+        </div>
+        <div class="settings-actions-group" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">
+          <button id="btnOpenReleases" class="btn btn-secondary" style="flex:1;">
+            <span>🌐 開啟 GitHub Releases 網頁</span>
+          </button>
+          <button id="btnOpenRepo" class="btn btn-outline" style="flex:1;">
+            <span>⭐ 開啟 GitHub 專案首頁</span>
+          </button>
         </div>
       </div>
     </div>

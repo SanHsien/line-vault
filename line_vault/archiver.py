@@ -100,19 +100,26 @@ class MediaArchiver:
         chat_hash = hashlib.sha1(chat_id.encode("utf-8")).hexdigest()
         expected_size = declared_bytes + 32
 
-        # Candidate paths to inspect
+        # Candidate paths to inspect (only when declared_bytes > 0)
         candidate_paths: list[Path] = []
+        if declared_bytes > 0:
+            # 1. Standard LINE 26.x cache pattern: <account_bucket>/<chat_hash>/m/
+            for match in root.glob(f"*/{chat_hash}/m/*"):
+                if match.is_file() and match.stat().st_size == expected_size:
+                    candidate_paths.append(match)
 
-        # 1. Standard LINE 26.x cache pattern: <account_bucket>/<chat_hash>/m/
-        for match in root.glob(f"*/{chat_hash}/m/*"):
-            if match.is_file() and match.stat().st_size == expected_size:
-                candidate_paths.append(match)
-
-        # 2. General fallback search in cache_root if specific hash folder not matched
-        if not candidate_paths:
-            for f in root.rglob("*"):
-                if f.is_file() and f.stat().st_size == expected_size:
-                    candidate_paths.append(f)
+            # 2. Bounded fallback search in cache_root if specific hash folder not matched
+            if not candidate_paths:
+                inspected = 0
+                for f in root.rglob("*"):
+                    inspected += 1
+                    if inspected > 1200:
+                        break
+                    try:
+                        if f.is_file() and f.stat().st_size == expected_size:
+                            candidate_paths.append(f)
+                    except OSError:
+                        continue
 
         for cand in candidate_paths:
             try:
@@ -760,6 +767,40 @@ class MediaArchiver:
             "monitored_analyzed": analyzed_count,
         }
 
+    def delete_chat(self, chat_id: str) -> bool:
+        """Delete a single chat room from the DB and remove its archived media directory."""
+        import shutil
+
+        deleted = self.db.delete_chat(chat_id)
+        for folder_name in {chat_id, _sanitize_path_part(chat_id)}:
+            if folder_name:
+                target = self.media_dir / folder_name
+                if target.exists() and target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+        return deleted
+
+    def clear_demo_data(self) -> dict:
+        """Delete all demo/test/placeholder chats and their media directories."""
+        import shutil
+
+        deleted_ids = self.db.clear_demo_data()
+        for cid in [
+            "c_proj_delivery",
+            "c_rd_core",
+            "c_vendor_wang",
+            "c_family_life",
+            "c_line_edb_sync",
+        ]:
+            for folder_name in {cid, _sanitize_path_part(cid)}:
+                target = self.media_dir / folder_name
+                if target.exists() and target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+        return {
+            "status": "ok",
+            "deleted_chats": deleted_ids,
+            "deleted_count": len(deleted_ids),
+        }
+
     def import_line_text_export(
         self,
         chat_name: str,
@@ -990,7 +1031,7 @@ class MediaArchiver:
 
         chat_name = chat.get("chat_name") or "未命名聊天室"
         safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", chat_name).strip(" ._") or _sanitize_path_part(chat_id)
-        messages = self.db.search_messages(chat_id=chat_id, limit=5000)
+        messages = self.db.search_messages(chat_id=chat_id, limit=0)
         insight = self.db.get_latest_insight(chat_id)
 
         now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

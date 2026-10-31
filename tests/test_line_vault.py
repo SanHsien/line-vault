@@ -695,7 +695,7 @@ def test_server_rest_api_endpoints(tmp_path: Path):
         # 14. POST /api/sync-mcp endpoint check
         req_sync = urllib.request.Request(
             f"{base_url}/api/sync-mcp",
-            data=json.dumps({"days": 7}).encode("utf-8"),
+            data=json.dumps({"days": 7, "cache_dir": str(sim_line_dir)}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -1223,20 +1223,58 @@ def test_non_ascii_media_and_report_download(tmp_path: Path):
 
 
 def test_builtin_native_line_reader_and_xor_media(tmp_path: Path):
-    """Verify BuiltinLineReader works out-of-the-box without any external script and deobfuscates XOR media."""
-    from line_vault.line_reader import try_deobfuscate_xor_media
+    """Verify BuiltinLineReader works out-of-the-box with SQLite/EDB databases and deobfuscates XOR media."""
+    import sqlite3
+    import struct
+    import time
+
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    from line_vault.line_reader import (
+        _md5,
+        _page_iv,
+        decrypt_edb_page,
+        derive_edb_key,
+        try_deobfuscate_xor_media,
+    )
 
     mock_line_root = tmp_path / "LINE"
     mock_data_dir = mock_line_root / "Data"
-    mock_data_dir.mkdir(parents=True)
+    mock_db_dir = mock_data_dir / "db"
+    mock_db_dir.mkdir(parents=True)
 
-    # 1. Create a mock .edb-wal file containing readable CJK conversation snippets
-    wal_file = mock_data_dir / "talk.edb-wal"
-    wal_file.write_bytes(
-        b"\x00\x01WAL_HEADER\x00"
-        + "請記得本週五前提交季度財務報表與合約正本，金額共 NT$ 88,000 元。".encode("utf-8")
-        + b"\x00\x00"
+    # 1. Create a real LINE schema SQLite database at mock_db_dir / "qwb_test.edb"
+    edb_path = mock_db_dir / "qwb_test.edb"
+    conn = sqlite3.connect(str(edb_path))
+    conn.execute("CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT)")
+    conn.execute(
+        "CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayNameOverridden TEXT, _displayName TEXT)"
     )
+    conn.execute(
+        "CREATE TABLE _message ("
+        "_id INTEGER PRIMARY KEY, _chatId TEXT, _from TEXT, "
+        "_createdTime INTEGER, _text TEXT, _contentType INTEGER, "
+        "_contentMetadata TEXT, _contentInfo TEXT)"
+    )
+    now_ms = int(time.time() * 1000)
+    conn.execute("INSERT INTO _groupChat VALUES ('c_real_grp_1', '真實LINE研發群組')")
+    conn.execute("INSERT INTO _contact VALUES ('u_alice_1', '', 'Alice 設計師')")
+    conn.execute(
+        "INSERT INTO _message VALUES (1001, 'c_real_grp_1', 'u_alice_1', ?, '請於週五前確認新版架構規格書與 NT$ 120,000 預算', 0, '{}', '{}')",
+        (now_ms,),
+    )
+    conn.commit()
+    conn.close()
+
+    # Verify wxSQLite3 AES-128-CBC page encryption/decryption roundtrip
+    raw_sqlite_bytes = edb_path.read_bytes()
+    page1 = raw_sqlite_bytes[:4096]
+    base_key = derive_edb_key(b"0123456789abcdef0123456789abcdef")
+    p1_aes_key = _md5(base_key + struct.pack("<I", 1) + b"sAlT")
+    enc_payload = Cipher(algorithms.AES(p1_aes_key), modes.CBC(_page_iv(1))).encryptor().update(page1[16:])
+    fake_enc_page1 = b"\x00" * 8 + enc_payload[:8] + page1[16:24] + enc_payload[8:]
+    dec_page1 = decrypt_edb_page(fake_enc_page1, base_key, 1)
+    assert dec_page1 == page1
 
     # 2. Create a single-byte XOR obfuscated PNG file (key = 0x5A)
     valid_png = (
@@ -1265,7 +1303,101 @@ def test_builtin_native_line_reader_and_xor_media(tmp_path: Path):
     assert sync_res["status"] == "ok"
     assert sync_res["engine"] == "builtin-native-reader"
     assert sync_res["chats_synced"] >= 2
+    assert sync_res["messages_synced"] >= 1
     assert sync_res["media_archived"] == 1
+    chats = {c["chat_id"]: c for c in db.list_chats()}
+    assert "c_real_grp_1" in chats
+    assert chats["c_real_grp_1"]["chat_name"] == "真實LINE研發群組"
+
+
+def test_unlimited_txt_messages_and_delete_clear_about_apis(tmp_path: Path):
+    """Verify >300 .txt messages are returned without truncation, demo/chat deletion works, and /api/about works."""
+    import json
+    import threading
+    import urllib.request
+
+    from line_vault.server import create_server
+
+    vault_dir = tmp_path / "vault_unlim"
+    server = create_server(vault_dir=vault_dir, host="127.0.0.1", port=0)
+    port = server.server_address[1]
+    base_url = f"http://127.0.0.1:{port}"
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+
+    try:
+        # 1. Seed demo data and then clear demo data via POST /api/demo/clear
+        req_seed = urllib.request.Request(f"{base_url}/api/demo/seed", data=b"{}", method="POST")
+        with urllib.request.urlopen(req_seed) as resp:
+            assert resp.status == 200
+        with urllib.request.urlopen(f"{base_url}/api/chats") as resp:
+            chats_before = json.loads(resp.read().decode("utf-8"))
+            assert len(chats_before) == 4
+
+        req_clear = urllib.request.Request(f"{base_url}/api/demo/clear", data=b"{}", method="POST")
+        with urllib.request.urlopen(req_clear) as resp:
+            clear_data = json.loads(resp.read().decode("utf-8"))
+            assert clear_data["success"] is True
+            assert clear_data["clear_result"]["deleted_count"] == 4
+        with urllib.request.urlopen(f"{base_url}/api/chats") as resp:
+            chats_after = json.loads(resp.read().decode("utf-8"))
+            assert len(chats_after) == 0
+
+        # 2. Import a .txt chat history with 450 messages (> 300 former limit)
+        lines = ["[LINE] 大型專案超過三百則對話紀錄.txt", "儲存日期：2026/10/31 18:00", ""]
+        lines.append("2026/10/31（週六）")
+        for i in range(1, 451):
+            hh = (8 + (i // 60)) % 24
+            mm = i % 60
+            lines.append(f"{hh:02d}:{mm:02d}\t成員{i % 5}\t這是第 {i} 則重要訊息，確認無 300 則上限截斷")
+        txt_payload = "\n".join(lines)
+
+        req_imp = urllib.request.Request(
+            f"{base_url}/api/import-text",
+            data=json.dumps({
+                "chat_name": "大型專案450則測試群",
+                "text_content": txt_payload,
+                "auto_analyze": True,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_imp) as resp:
+            imp_data = json.loads(resp.read().decode("utf-8"))
+            assert imp_data["success"] is True
+            assert imp_data["import_result"]["imported_messages"] == 450
+            chat_id = imp_data["import_result"]["chat_id"]
+
+        # Verify GET /api/messages?limit=0&chat_id=... returns ALL 450 messages
+        with urllib.request.urlopen(f"{base_url}/api/messages?limit=0&chat_id={chat_id}") as resp:
+            msgs = json.loads(resp.read().decode("utf-8"))
+            assert len(msgs) == 450
+            assert "第 1 則" in msgs[0]["text_content"]
+            assert "第 450 則" in msgs[-1]["text_content"]
+
+        # Verify GET /api/about returns app metadata
+        with urllib.request.urlopen(f"{base_url}/api/about") as resp:
+            about = json.loads(resp.read().decode("utf-8"))
+            assert about["version"] == "1.0.0"
+            assert about["author"] == "SanHsien"
+            assert "github.com/SanHsien/line-vault" in about["github_repo_url"]
+
+        # Verify POST /api/chats/<chat_id>/delete deletes the chat room
+        req_del = urllib.request.Request(
+            f"{base_url}/api/chats/{chat_id}/delete",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_del) as resp:
+            del_data = json.loads(resp.read().decode("utf-8"))
+            assert del_data["success"] is True
+
+        with urllib.request.urlopen(f"{base_url}/api/chats") as resp:
+            assert len(json.loads(resp.read().decode("utf-8"))) == 0
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_theme_modes_and_plain_txt_import(tmp_path: Path):

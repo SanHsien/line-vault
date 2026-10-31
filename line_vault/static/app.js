@@ -11,10 +11,13 @@ document.addEventListener("DOMContentLoaded", () => {
       kpiMonitored: "監控聊天室",
       kpiArchived: "永久保存媒體",
       kpiAction: "待辦追蹤",
+      btnAbout: "關於",
       btnHelp: "使用說明",
       btnSettings: "金庫與同步設定",
       btnAnalyzeAll: "重新分析全部",
       btnSeedDemo: "載入範例資料",
+      btnClearDemo: "清除範例",
+      deleteChat: "刪除聊天室",
       chatListTitle: "聊天室清單",
       filterAll: "全部",
       filterMonitored: "監控中",
@@ -54,10 +57,13 @@ document.addEventListener("DOMContentLoaded", () => {
       kpiMonitored: "Monitored Chats",
       kpiArchived: "Vaulted Media",
       kpiAction: "Action Items",
+      btnAbout: "About",
       btnHelp: "Quick Guide",
       btnSettings: "Settings & Sync",
       btnAnalyzeAll: "Re-analyze All",
       btnSeedDemo: "Load Demo Data",
+      btnClearDemo: "Clear Demo",
+      deleteChat: "Delete Chat",
       chatListTitle: "Chats",
       filterAll: "All",
       filterMonitored: "Monitored",
@@ -110,6 +116,20 @@ document.addEventListener("DOMContentLoaded", () => {
   let chatsCache = [];
 
   // DOM Elements
+  const btnOpenAbout = document.getElementById("btnOpenAbout");
+  const txtBtnAbout = document.getElementById("txtBtnAbout");
+  const aboutModal = document.getElementById("aboutModal");
+  const btnCloseAbout = document.getElementById("btnCloseAbout");
+  const aboutVersion = document.getElementById("aboutVersion");
+  const aboutAuthor = document.getElementById("aboutAuthor");
+  const aboutLicense = document.getElementById("aboutLicense");
+  const aboutRepoLink = document.getElementById("aboutRepoLink");
+  const updateStatusBox = document.getElementById("updateStatusBox");
+  const btnCheckUpdate = document.getElementById("btnCheckUpdate");
+  const btnDownloadUpdate = document.getElementById("btnDownloadUpdate");
+  const btnOpenReleases = document.getElementById("btnOpenReleases");
+  const btnOpenRepo = document.getElementById("btnOpenRepo");
+
   const btnOpenHelp = document.getElementById("btnOpenHelp");
   const txtBtnHelp = document.getElementById("txtBtnHelp");
   const helpModal = document.getElementById("helpModal");
@@ -128,8 +148,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const txtBtnSettings = document.getElementById("txtBtnSettings");
   const txtBtnAnalyzeAll = document.getElementById("txtBtnAnalyzeAll");
   const txtBtnSeedDemo = document.getElementById("txtBtnSeedDemo");
+  const txtBtnClearDemo = document.getElementById("txtBtnClearDemo");
+  const btnClearDemo = document.getElementById("btnClearDemo");
   const txtExportReport = document.getElementById("txtExportReport");
   const btnExportReport = document.getElementById("btnExportReport");
+  const btnDeleteChat = document.getElementById("btnDeleteChat");
+  const txtDeleteChat = document.getElementById("txtDeleteChat");
   const txtAutoMonitor = document.getElementById("txtAutoMonitor");
 
   const tabMessagesTxt = document.getElementById("tabMessagesTxt");
@@ -196,11 +220,14 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateLanguageUI() {
     if (langToggleLabel) langToggleLabel.textContent = t("langLabel");
     if (i18nSubtitle) i18nSubtitle.textContent = t("subtitle");
+    if (txtBtnAbout) txtBtnAbout.textContent = t("btnAbout");
     if (txtBtnHelp) txtBtnHelp.textContent = t("btnHelp");
     if (txtBtnSettings) txtBtnSettings.textContent = t("btnSettings");
     if (txtBtnAnalyzeAll) txtBtnAnalyzeAll.textContent = t("btnAnalyzeAll");
     if (txtBtnSeedDemo) txtBtnSeedDemo.textContent = t("btnSeedDemo");
+    if (txtBtnClearDemo) txtBtnClearDemo.textContent = t("btnClearDemo");
     if (txtExportReport) txtExportReport.textContent = t("exportReport");
+    if (txtDeleteChat) txtDeleteChat.textContent = t("deleteChat");
     if (txtAutoMonitor) txtAutoMonitor.textContent = t("autoMonitor");
 
     if (tabMessagesTxt) tabMessagesTxt.textContent = t("tabMessages");
@@ -359,7 +386,10 @@ document.addEventListener("DOMContentLoaded", () => {
             <span>${c.chat_type === "direct" ? "👤" : "👥"}</span>
             <span>${escapeHtml(c.chat_name)}</span>
           </span>
-          <span class="chat-card-type-tag">${typeLabel}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="chat-card-type-tag">${typeLabel}</span>
+            <button type="button" class="btn-card-del" data-chat-id="${escapeHtml(c.chat_id)}" title="刪除此聊天室" style="background:transparent;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:4px;">🗑️</button>
+          </div>
         </div>
         <div class="chat-card-bottom">
           <span class="chat-card-time">${formatTime(c.last_message_at)}</span>
@@ -369,8 +399,54 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         </div>
       `;
+      const delBtn = card.querySelector(".btn-card-del");
+      if (delBtn) {
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteChatById(c.chat_id, c.chat_name);
+        });
+      }
       chatListContainer.appendChild(card);
     });
+  }
+
+  async function deleteChatById(chatId, chatName) {
+    if (!chatId) return;
+    try {
+      const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error("刪除失敗");
+      showToast(`已刪除聊天室「${chatName || chatId}」`, "🗑️");
+      if (currentChatId === chatId) {
+        currentChatId = null;
+        currentChat = null;
+        activeChatTitle.textContent = t("noChatSelected");
+        activeChatSubtitle.textContent = t("noChatSelectedSub");
+        if (btnExportReport) btnExportReport.disabled = true;
+        if (btnDeleteChat) btnDeleteChat.disabled = true;
+        centerMonitorToggle.disabled = true;
+        centerMonitorToggle.checked = false;
+      }
+      await fetchStatus();
+      await fetchChats();
+      if (!currentChatId && chatsCache.length > 0) {
+        selectChat(chatsCache[0]);
+      } else if (!currentChatId) {
+        loadCenterContent();
+        insightContainer.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">🤖</div>
+            <h3>尚無分析資料</h3>
+            <p>選擇左側聊天室並開啟監控，AI 將即時提取對話摘要、重要待辦與建議回覆。</p>
+          </div>
+        `;
+      }
+    } catch (err) {
+      showToast("刪除聊天室失敗: " + err.message, "❌");
+    }
   }
 
   async function selectChat(chat) {
@@ -379,6 +455,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (btnExportReport) {
       btnExportReport.disabled = false;
+    }
+    if (btnDeleteChat) {
+      btnDeleteChat.disabled = false;
     }
 
     // Update left pane active class
@@ -469,7 +548,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function loadMessages(onlyBookmarked = false) {
-    let url = `/api/messages?limit=300&`;
+    let url = `/api/messages?limit=0&`;
     if (currentChatId) url += `chat_id=${encodeURIComponent(currentChatId)}&`;
     if (globalSearchQuery) url += `q=${encodeURIComponent(globalSearchQuery)}&`;
     if (dateFrom) url += `date_from=${encodeURIComponent(dateFrom)}&`;
@@ -499,9 +578,10 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    filterStatusText.textContent = `共顯示 ${messages.length} 則對話紀錄`;
+    filterStatusText.textContent = `共顯示全部 ${messages.length} 則對話紀錄`;
     const list = document.createElement("div");
     list.className = "message-list";
+    const frag = document.createDocumentFragment();
 
     messages.forEach(m => {
       const row = document.createElement("div");
@@ -592,9 +672,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       }
 
-      list.appendChild(row);
+      frag.appendChild(row);
     });
 
+    list.appendChild(frag);
     centerContent.innerHTML = "";
     centerContent.appendChild(list);
     centerContent.scrollTop = centerContent.scrollHeight;
@@ -606,7 +687,7 @@ document.addEventListener("DOMContentLoaded", () => {
     else if (activeTab === "videos") typeParam = "video";
     else if (activeTab === "files") typeParam = "file";
 
-    let url = `/api/media?media_type=${typeParam}&limit=100&`;
+    let url = `/api/media?media_type=${typeParam}&limit=0&`;
     if (currentChatId) url += `chat_id=${encodeURIComponent(currentChatId)}&`;
     if (globalSearchQuery) url += `q=${encodeURIComponent(globalSearchQuery)}&`;
 
@@ -943,6 +1024,193 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnSeedDemo) {
     btnSeedDemo.addEventListener("click", () => triggerSeedDemo());
+  }
+
+  if (btnClearDemo) {
+    btnClearDemo.addEventListener("click", async () => {
+      btnClearDemo.disabled = true;
+      try {
+        const res = await fetch("/api/demo/clear", { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const cr = data.clear_result || {};
+          showToast(`已清除 ${cr.deleted_count || 0} 個測試範例聊天室！`, "🗑️");
+          currentChatId = null;
+          currentChat = null;
+          if (btnExportReport) btnExportReport.disabled = true;
+          if (btnDeleteChat) btnDeleteChat.disabled = true;
+          centerMonitorToggle.disabled = true;
+          centerMonitorToggle.checked = false;
+          await fetchStatus();
+          await fetchChats();
+          if (chatsCache.length > 0) {
+            selectChat(chatsCache[0]);
+          } else {
+            activeChatTitle.textContent = t("noChatSelected");
+            activeChatSubtitle.textContent = t("noChatSelectedSub");
+            loadCenterContent();
+            insightContainer.innerHTML = `
+              <div class="empty-state">
+                <div class="empty-icon">🤖</div>
+                <h3>尚無分析資料</h3>
+                <p>選擇左側聊天室並開啟監控，AI 將即時提取對話摘要、重要待辦與建議回覆。</p>
+              </div>
+            `;
+          }
+        } else {
+          showToast("清除範例資料失敗", "❌");
+        }
+      } catch (err) {
+        showToast("清除範例失敗: " + err.message, "❌");
+      } finally {
+        btnClearDemo.disabled = false;
+      }
+    });
+  }
+
+  if (btnDeleteChat) {
+    btnDeleteChat.addEventListener("click", () => {
+      if (!currentChatId) return;
+      deleteChatById(currentChatId, currentChat ? currentChat.chat_name : currentChatId);
+    });
+  }
+
+  // About & Update Modal Handlers
+  let latestDownloadUrl = "";
+  let latestReleasePageUrl = "https://github.com/SanHsien/line-vault/releases";
+  let repoHomeUrl = "https://github.com/SanHsien/line-vault";
+
+  async function openAboutModal() {
+    if (!aboutModal) return;
+    if (settingsModal) settingsModal.style.display = "none";
+    if (helpModal) helpModal.style.display = "none";
+    aboutModal.style.display = "flex";
+    try {
+      const res = await fetch("/api/about");
+      if (res.ok) {
+        const info = await res.json();
+        if (aboutVersion) aboutVersion.textContent = `v${info.version || "1.0.0"}`;
+        if (aboutAuthor) aboutAuthor.textContent = info.author || "SanHsien";
+        if (aboutLicense) aboutLicense.textContent = info.license || "MIT License";
+        if (aboutRepoLink) {
+          aboutRepoLink.textContent = info.github_repo || "SanHsien/line-vault";
+          aboutRepoLink.href = info.github_repo_url || repoHomeUrl;
+        }
+        repoHomeUrl = info.github_repo_url || repoHomeUrl;
+        latestReleasePageUrl = info.github_releases_url || latestReleasePageUrl;
+        latestDownloadUrl = info.download_exe_url || "";
+      }
+    } catch (e) {
+      // Keep default values
+    }
+  }
+
+  if (btnOpenAbout && aboutModal) {
+    btnOpenAbout.addEventListener("click", () => openAboutModal());
+    if (btnCloseAbout) {
+      btnCloseAbout.addEventListener("click", () => {
+        aboutModal.style.display = "none";
+      });
+    }
+    aboutModal.addEventListener("click", (e) => {
+      if (e.target === aboutModal) {
+        aboutModal.style.display = "none";
+      }
+    });
+  }
+
+  if (btnCheckUpdate) {
+    btnCheckUpdate.addEventListener("click", async () => {
+      btnCheckUpdate.disabled = true;
+      btnCheckUpdate.innerHTML = "<span>⏳ 正在檢查 GitHub Releases...</span>";
+      if (updateStatusBox) {
+        updateStatusBox.textContent = "正在連線至 GitHub 檢查最新版本...";
+      }
+      try {
+        const res = await fetch("/api/check-update");
+        const data = await res.json();
+        if (data.download_exe_url) latestDownloadUrl = data.download_exe_url;
+        if (data.release_url) latestReleasePageUrl = data.release_url;
+        if (updateStatusBox) {
+          const statusColor = data.has_update ? "var(--accent-amber)" : "var(--accent-green)";
+          updateStatusBox.innerHTML = `
+            <div style="font-weight:700;color:${statusColor};margin-bottom:4px;">
+              ${data.has_update ? "🚀 發現新版本！" : "✅ 目前已是最新版本"}
+            </div>
+            <div>目前版本：<b>v${escapeHtml(data.current_version || "1.0.0")}</b> ｜ 最新版本：<b>v${escapeHtml(data.latest_version || "1.0.0")}</b></div>
+            <div style="color:var(--text-muted);margin-top:4px;">${escapeHtml(data.message || "")}</div>
+          `;
+        }
+        showToast(data.message || "已完成版本更新檢查", data.has_update ? "🚀" : "✅");
+      } catch (err) {
+        if (updateStatusBox) {
+          updateStatusBox.textContent = "檢查更新失敗: " + err.message;
+        }
+        showToast("檢查更新失敗", "⚠️");
+      } finally {
+        btnCheckUpdate.disabled = false;
+        btnCheckUpdate.innerHTML = "<span>🔄 檢查更新</span>";
+      }
+    });
+  }
+
+  if (btnDownloadUpdate) {
+    btnDownloadUpdate.addEventListener("click", async () => {
+      btnDownloadUpdate.disabled = true;
+      btnDownloadUpdate.innerHTML = "<span>⏳ 正在下載最新執行檔...</span>";
+      try {
+        const res = await fetch("/api/download-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ download_url: latestDownloadUrl }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (updateStatusBox) {
+            updateStatusBox.innerHTML = `
+              <div style="font-weight:700;color:var(--accent-green);">✅ 最新版執行檔已下載完成！</div>
+              <div style="margin-top:4px;">儲存路徑：<code>${escapeHtml(data.saved_path)}</code> (${formatBytes(data.size_bytes)})</div>
+            `;
+          }
+          showToast(`已下載至 ${data.saved_path}`, "⬇️");
+        } else {
+          throw new Error(data.error || "下載失敗");
+        }
+      } catch (err) {
+        showToast("一鍵下載失敗，正在為您開啟 Releases 網頁...", "🌐");
+        await openExternalRepoUrl(latestReleasePageUrl);
+      } finally {
+        btnDownloadUpdate.disabled = false;
+        btnDownloadUpdate.innerHTML = "<span>⬇️ 一鍵下載最新執行檔至 Downloads</span>";
+      }
+    });
+  }
+
+  async function openExternalRepoUrl(url) {
+    try {
+      const res = await fetch("/api/open-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) {
+        window.open(url, "_blank");
+      }
+    } catch (e) {
+      window.open(url, "_blank");
+    }
+  }
+
+  if (btnOpenReleases) {
+    btnOpenReleases.addEventListener("click", () => {
+      openExternalRepoUrl(latestReleasePageUrl);
+    });
+  }
+
+  if (btnOpenRepo) {
+    btnOpenRepo.addEventListener("click", () => {
+      openExternalRepoUrl(repoHomeUrl);
+    });
   }
 
   // 8. Analyze All Button
@@ -1414,7 +1682,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Purge any third-party browser extension DOM nodes appended to body
   function purgeInjectedExtensionNodes() {
-    const allowedIds = new Set(["settingsModal", "helpModal", "toastContainer"]);
+    const allowedIds = new Set(["settingsModal", "helpModal", "aboutModal", "toastContainer"]);
     Array.from(document.body.children).forEach((el) => {
       if (el.tagName === "SCRIPT") return;
       if (el.classList.contains("app-header") || el.classList.contains("main-layout")) return;

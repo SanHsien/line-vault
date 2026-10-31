@@ -6,13 +6,32 @@ import platform
 import re
 import sys
 import urllib.parse
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from line_vault import (
+    APP_AUTHOR,
+    APP_NAME,
+    APP_VERSION,
+    GITHUB_RELEASES_URL,
+    GITHUB_REPO,
+    GITHUB_REPO_URL,
+)
 from line_vault.analyzer import ChatAnalyzer
 from line_vault.archiver import MediaArchiver
 from line_vault.db import VaultDB
+
+
+def _parse_semver(ver_str: str) -> tuple[int, int, int]:
+    """Parse semantic version string like 'v1.0.0' into a comparable (major, minor, patch) tuple."""
+    cleaned = str(ver_str or "").strip().lstrip("vV")
+    parts = re.findall(r"\d+", cleaned)
+    nums = [int(p) for p in parts[:3]]
+    while len(nums) < 3:
+        nums.append(0)
+    return (nums[0], nums[1], nums[2])
 
 
 class VaultRequestHandler(BaseHTTPRequestHandler):
@@ -83,7 +102,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
     def _send_cors_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     def do_OPTIONS(self) -> None:
@@ -135,7 +154,12 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
             return self._send_json({
                 "status": "online",
-                "version": "1.0.0",
+                "version": APP_VERSION,
+                "app_name": APP_NAME,
+                "author": APP_AUTHOR,
+                "github_repo": GITHUB_REPO,
+                "github_url": GITHUB_REPO_URL,
+                "releases_url": GITHUB_RELEASES_URL,
                 "stats": stats,
                 "vault_dir": str(self.server_vault_dir),
                 "line_detected": line_detected,
@@ -143,6 +167,79 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                 "fts5_enabled": self.db.has_fts5,
                 "platform": platform.platform(),
             })
+
+        if path == "/api/about":
+            return self._send_json({
+                "app_name": APP_NAME,
+                "version": APP_VERSION,
+                "author": APP_AUTHOR,
+                "license": "MIT License",
+                "github_repo": GITHUB_REPO,
+                "github_url": GITHUB_REPO_URL,
+                "github_repo_url": GITHUB_REPO_URL,
+                "releases_url": GITHUB_RELEASES_URL,
+                "github_releases_url": GITHUB_RELEASES_URL,
+                "download_exe_url": f"{GITHUB_RELEASES_URL}/latest/download/LINE-Vault-win64.exe",
+                "platform": platform.platform(),
+                "vault_dir": str(self.server_vault_dir),
+            })
+
+        if path == "/api/check-update":
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            default_exe_url = f"{GITHUB_RELEASES_URL}/latest/download/LINE-Vault-win64.exe"
+            default_zip_url = f"{GITHUB_RELEASES_URL}/latest/download/LINE-Vault-v{APP_VERSION}-win64.zip"
+            try:
+                req = urllib.request.Request(
+                    api_url,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": f"LINE-Vault/{APP_VERSION}",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    rel_data = json.loads(resp.read().decode("utf-8"))
+                tag_name = str(rel_data.get("tag_name") or f"v{APP_VERSION}")
+                latest_ver = tag_name.lstrip("vV") or APP_VERSION
+                has_update = _parse_semver(latest_ver) > _parse_semver(APP_VERSION)
+                html_url = str(rel_data.get("html_url") or GITHUB_RELEASES_URL)
+                published_at = str(rel_data.get("published_at") or "")
+                body_notes = str(rel_data.get("body") or "")
+                exe_url = default_exe_url
+                zip_url = default_zip_url
+                for asset in rel_data.get("assets") or []:
+                    if not isinstance(asset, dict):
+                        continue
+                    aname = str(asset.get("name") or "")
+                    burl = str(asset.get("browser_download_url") or "")
+                    if burl and aname.lower().endswith(".exe"):
+                        exe_url = burl
+                    elif burl and aname.lower().endswith(".zip"):
+                        zip_url = burl
+                return self._send_json({
+                    "status": "ok",
+                    "current_version": APP_VERSION,
+                    "latest_version": latest_ver,
+                    "tag_name": tag_name,
+                    "has_update": has_update,
+                    "release_url": html_url,
+                    "download_exe_url": exe_url,
+                    "download_zip_url": zip_url,
+                    "published_at": published_at,
+                    "release_notes": body_notes[:1000],
+                })
+            except Exception as exc:
+                return self._send_json({
+                    "status": "offline",
+                    "current_version": APP_VERSION,
+                    "latest_version": APP_VERSION,
+                    "tag_name": f"v{APP_VERSION}",
+                    "has_update": False,
+                    "release_url": GITHUB_RELEASES_URL,
+                    "download_exe_url": default_exe_url,
+                    "download_zip_url": default_zip_url,
+                    "published_at": "",
+                    "message": f"無法連線至 GitHub API ({exc})，可直接開啟 Releases 網頁檢視。",
+                })
 
         if path == "/api/chats":
             only_mon = query.get("monitored", [""])[0] in ("1", "true")
@@ -158,11 +255,11 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             d_from = query.get("date_from", [None])[0]
             d_to = query.get("date_to", [None])[0]
             only_bm = query.get("bookmarked", ["0"])[0] in ("1", "true")
-            limit_str = query.get("limit", ["200"])[0]
+            limit_str = query.get("limit", ["0"])[0]
             try:
                 limit = int(limit_str)
             except ValueError:
-                limit = 200
+                limit = 0
 
             msgs = self.db.search_messages(
                 query=q_text,
@@ -179,11 +276,11 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             chat_id = query.get("chat_id", [None])[0]
             m_type = query.get("media_type", [None])[0]
             q_text = query.get("q", [None])[0]
-            limit_str = query.get("limit", ["200"])[0]
+            limit_str = query.get("limit", ["0"])[0]
             try:
                 limit = int(limit_str)
             except ValueError:
-                limit = 200
+                limit = 0
 
             media_list = self.db.list_media(
                 chat_id=chat_id,
@@ -233,14 +330,40 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
         return self._send_error("Not Found", status=404)
 
+    def do_DELETE(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        # DELETE /api/chats/<chat_id>
+        delete_match = re.match(r"^/api/chats/([^/]+)$", path)
+        if delete_match:
+            chat_id = urllib.parse.unquote(delete_match.group(1))
+            removed = self.archiver.delete_chat(chat_id)
+            if not removed:
+                return self._send_error("Chat not found", status=404)
+            stats = self.db.get_dashboard_stats()
+            return self._send_json({"success": True, "deleted_chat_id": chat_id, "stats": stats})
+
+        return self._send_error("Not Found", status=404)
+
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        # POST /api/chats/<chat_id>/delete
+        del_match = re.match(r"^/api/chats/([^/]+)/delete$", path)
+        if del_match:
+            chat_id = urllib.parse.unquote(del_match.group(1))
+            removed = self.archiver.delete_chat(chat_id)
+            if not removed:
+                return self._send_error("Chat not found", status=404)
+            stats = self.db.get_dashboard_stats()
+            return self._send_json({"success": True, "deleted_chat_id": chat_id, "stats": stats})
+
         # POST /api/chats/<chat_id>/monitor
         monitor_match = re.match(r"^/api/chats/([^/]+)/monitor$", path)
         if monitor_match:
-            chat_id = monitor_match.group(1)
+            chat_id = urllib.parse.unquote(monitor_match.group(1))
             body = self._read_json_body()
             monitored = bool(body.get("monitored", True))
             auto_backup = bool(body.get("auto_backup_media", True))
@@ -347,6 +470,56 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             seed_res = self.archiver.seed_demo_data(analyzer=self.analyzer)
             stats = self.db.get_dashboard_stats()
             return self._send_json({"success": True, "seed_result": seed_res, "stats": stats})
+
+        # POST /api/demo/clear
+        if path == "/api/demo/clear":
+            clear_res = self.archiver.clear_demo_data()
+            stats = self.db.get_dashboard_stats()
+            return self._send_json({"success": True, "clear_result": clear_res, "stats": stats})
+
+        # POST /api/open-url
+        if path == "/api/open-url":
+            body = self._read_json_body()
+            target_url = str(body.get("url") or GITHUB_REPO_URL).strip()
+            if not target_url.startswith(GITHUB_REPO_URL):
+                return self._send_error("Only official repository URLs are permitted", status=400)
+            try:
+                if hasattr(os, "startfile"):
+                    os.startfile(target_url)  # type: ignore[attr-defined]
+                else:
+                    webbrowser.open(target_url)
+                return self._send_json({"success": True, "opened_url": target_url})
+            except Exception as exc:
+                return self._send_error(str(exc), status=500)
+
+        # POST /api/download-update
+        if path == "/api/download-update":
+            body = self._read_json_body()
+            dl_url = str(body.get("download_url") or f"{GITHUB_REPO_URL}/releases/latest/download/LINE-Vault-win64.exe").strip()
+            if not dl_url.startswith(GITHUB_REPO_URL) and not dl_url.startswith("https://objects.githubusercontent.com/"):
+                return self._send_error("Untrusted download URL", status=400)
+            downloads_dir = Path.home() / "Downloads"
+            if not downloads_dir.exists():
+                downloads_dir = self.server_vault_dir
+            filename = Path(urllib.parse.urlparse(dl_url).path).name or "LINE-Vault-win64.exe"
+            if not filename.endswith((".exe", ".zip")):
+                filename = "LINE-Vault-win64.exe"
+            dest_path = downloads_dir / f"LINE-Vault-latest-{filename}"
+            try:
+                req = urllib.request.Request(
+                    dl_url,
+                    headers={"User-Agent": f"LINE-Vault/{APP_VERSION}"},
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data_bytes = resp.read()
+                dest_path.write_bytes(data_bytes)
+                return self._send_json({
+                    "success": True,
+                    "saved_path": str(dest_path),
+                    "size_bytes": len(data_bytes),
+                })
+            except Exception as exc:
+                return self._send_error(f"下載更新檔案失敗 ({exc})", status=500)
 
         # POST /api/scan-line
         if path == "/api/scan-line":

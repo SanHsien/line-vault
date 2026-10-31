@@ -18,7 +18,7 @@ class ChatAnalyzer:
         if not chat:
             raise ValueError(f"Chat not found: {chat_id}")
 
-        messages = self.db.search_messages(chat_id=chat_id, limit=500)
+        messages = self.db.search_messages(chat_id=chat_id, limit=0)
         chat_name = chat.get("chat_name") or ("Unnamed Chat" if is_en else "未命名聊天室")
 
         if not messages:

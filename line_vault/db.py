@@ -238,6 +238,41 @@ class VaultDB:
             res["auto_analyze"] = bool(res["auto_analyze"])
             return res
 
+    def delete_chat(self, chat_id: str) -> bool:
+        """Delete a chat room and all its messages, FTS entries, media records, and AI insights."""
+        if not chat_id:
+            return False
+        with self._lock, self._conn:
+            cur = self._conn.cursor()
+            cur.execute("SELECT chat_id FROM chats WHERE chat_id = ?;", (chat_id,))
+            if not cur.fetchone():
+                return False
+            if self.has_fts5:
+                try:
+                    cur.execute("DELETE FROM messages_fts WHERE chat_id = ?;", (chat_id,))
+                except sqlite3.Error:
+                    pass
+            cur.execute("DELETE FROM media_files WHERE chat_id = ?;", (chat_id,))
+            cur.execute("DELETE FROM messages WHERE chat_id = ?;", (chat_id,))
+            cur.execute("DELETE FROM insights WHERE chat_id = ?;", (chat_id,))
+            cur.execute("DELETE FROM chats WHERE chat_id = ?;", (chat_id,))
+            return True
+
+    def clear_demo_data(self) -> list[str]:
+        """Remove built-in demo chats and legacy placeholder chats, returning deleted chat_ids."""
+        demo_ids = [
+            "c_proj_delivery",
+            "c_rd_core",
+            "c_vendor_wang",
+            "c_family_life",
+            "c_line_edb_sync",
+        ]
+        deleted: list[str] = []
+        for cid in demo_ids:
+            if self.delete_chat(cid):
+                deleted.append(cid)
+        return deleted
+
     def list_chats(
         self,
         only_monitored: bool = False,
@@ -497,9 +532,9 @@ class VaultDB:
         date_from: str | None = None,
         date_to: str | None = None,
         only_bookmarked: bool = False,
-        limit: int = 200,
+        limit: int = 0,
     ) -> list[dict]:
-        """Search messages with FTS5 or LIKE fallback and join media information."""
+        """Search messages with FTS5 or LIKE fallback and join media information. limit<=0 returns all."""
         with self._lock:
             cur = self._conn.cursor()
             params: list = []
@@ -535,7 +570,7 @@ class VaultDB:
                     # Sanitize for FTS5
                     safe_query = '"' + q_clean.replace('"', '""') + '"'
                     cur.execute(
-                        "SELECT message_id FROM messages_fts WHERE messages_fts MATCH ? LIMIT 1000;",
+                        "SELECT message_id FROM messages_fts WHERE messages_fts MATCH ?;",
                         (safe_query,),
                     )
                     rows = cur.fetchall()
@@ -555,6 +590,7 @@ class VaultDB:
                 params.extend([like_term, like_term, like_term])
 
             where_sql = " AND ".join(where_clauses)
+            limit_clause = "LIMIT ?" if limit and limit > 0 else ""
             sql = f"""
                 SELECT
                     m.message_id,
@@ -583,9 +619,10 @@ class VaultDB:
                 LEFT JOIN media_files mf ON m.message_id = mf.message_id
                 WHERE {where_sql}
                 ORDER BY m.timestamp_ms ASC
-                LIMIT ?;
+                {limit_clause};
             """
-            params.append(limit)
+            if limit and limit > 0:
+                params.append(limit)
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -605,9 +642,9 @@ class VaultDB:
         chat_id: str | None = None,
         media_type: str | None = None,
         query: str | None = None,
-        limit: int = 200,
+        limit: int = 0,
     ) -> list[dict]:
-        """List archived media files."""
+        """List archived media files. limit<=0 returns all."""
         with self._lock:
             cur = self._conn.cursor()
             sql = """
@@ -633,8 +670,10 @@ class VaultDB:
                 like_q = f"%{query.strip()}%"
                 params.extend([like_q, like_q])
 
-            sql += " ORDER BY m.timestamp_ms DESC, mf.archived_at DESC LIMIT ?"
-            params.append(limit)
+            sql += " ORDER BY m.timestamp_ms DESC, mf.archived_at DESC"
+            if limit and limit > 0:
+                sql += " LIMIT ?"
+                params.append(limit)
 
             cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
