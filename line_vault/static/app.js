@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btnAbout: "關於",
       btnHelp: "使用說明",
       btnSettings: "金庫與同步設定",
+      btnManualSync: "同步 LINE 訊息",
       btnAnalyzeAll: "重新分析全部",
       btnSeedDemo: "載入範例資料",
       btnClearDemo: "清除範例",
@@ -61,6 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btnAbout: "About",
       btnHelp: "Quick Guide",
       btnSettings: "Settings & Sync",
+      btnManualSync: "Sync LINE Chats",
       btnAnalyzeAll: "Re-analyze All",
       btnSeedDemo: "Load Demo Data",
       btnClearDemo: "Clear Demo",
@@ -168,6 +170,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const globalSearchInput = document.getElementById("globalSearchInput");
   const globalSearchClear = document.getElementById("globalSearchClear");
   const btnAnalyzeAll = document.getElementById("btnAnalyzeAll");
+  const txtBtnManualSync = document.getElementById("txtBtnManualSync");
+  const btnManualSync = document.getElementById("btnManualSync");
   const btnSeedDemo = document.getElementById("btnSeedDemo");
   const btnRefreshAnalysis = document.getElementById("btnRefreshAnalysis");
   const btnOpenSettings = document.getElementById("btnOpenSettings");
@@ -229,6 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (txtBtnAbout) txtBtnAbout.textContent = t("btnAbout");
     if (txtBtnHelp) txtBtnHelp.textContent = t("btnHelp");
     if (txtBtnSettings) txtBtnSettings.textContent = t("btnSettings");
+    if (txtBtnManualSync) txtBtnManualSync.textContent = t("btnManualSync");
     if (txtBtnAnalyzeAll) txtBtnAnalyzeAll.textContent = t("btnAnalyzeAll");
     if (txtBtnSeedDemo) txtBtnSeedDemo.textContent = t("btnSeedDemo");
     if (txtBtnClearDemo) txtBtnClearDemo.textContent = t("btnClearDemo");
@@ -1040,6 +1045,44 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (btnSeedDemo) {
     btnSeedDemo.addEventListener("click", () => triggerSeedDemo());
+  }
+
+  // Manual LINE Sync Button in Top Header
+  if (btnManualSync) {
+    btnManualSync.addEventListener("click", async () => {
+      btnManualSync.disabled = true;
+      btnManualSync.innerHTML = "<span>⏳</span> 正在同步 LINE 訊息...";
+      try {
+        const res = await fetch("/api/sync-mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ days: 0 }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const sr = data.sync_result || {};
+          showToast(
+            `LINE 手動同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息，歸檔 ${sr.media_archived || 0} 件媒體！`,
+            "🔄"
+          );
+          await fetchStatus();
+          await fetchChats();
+          if (currentChatId) {
+            loadCenterContent();
+            loadChatInsight(currentChatId);
+          } else if (chatsCache.length > 0) {
+            selectChat(chatsCache[0]);
+          }
+        } else {
+          showToast(data.error || "手動同步未完成，請確認本機 LINE 是否已開啟", "⚠️");
+        }
+      } catch (err) {
+        showToast("同步出錯: " + err.message, "❌");
+      } finally {
+        btnManualSync.disabled = false;
+        btnManualSync.innerHTML = `<span class="btn-icon">🔄</span> <span id="txtBtnManualSync">${t("btnManualSync")}</span>`;
+      }
+    });
   }
 
   if (btnClearDemo) {
