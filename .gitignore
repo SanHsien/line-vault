@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL / PyInstaller build files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dll
+*.dylib
+build/
+dist/
+*.spec
+*.exe
+*.zip
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# LINE Vault local runtime data & secrets (NEVER COMMIT REAL DATA)
+vault_data/
+*.edb
+*.edb-wal
+*.edb-shm
+*.sqlite
+*.sqlite3
+*.db
+*.eimg
+*.key
+.env
+.env.*
+
+# Testing & coverage
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dependency-freshness-report.md
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
