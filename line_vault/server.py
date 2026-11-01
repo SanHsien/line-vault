@@ -128,25 +128,24 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         ):
             return default_line_dir if (default_line_dir and os.path.isdir(default_line_dir)) else None
 
-        # Disallow relative traversal and control characters before touching filesystem
+        # Disallow traversal and control characters
         if ".." in user_dir_str or any(c in user_dir_str for c in "\x00\r\n\t"):
             return None
 
-        base_root = os.path.normpath(str(self.allowed_scan_root))
-        normalized = os.path.normpath(user_dir_str)
+        base_path = os.path.normpath(str(self.allowed_scan_root))
+        if user_dir_str.startswith(base_path):
+            rel_part = os.path.relpath(user_dir_str, base_path)
+        else:
+            rel_part = user_dir_str
 
-        # CodeQL recognized path containment prefix check
-        is_safe_child = (
-            normalized == base_root
-            or normalized.startswith(base_root + os.sep)
-            or bool(default_line_root and (normalized == default_line_root or normalized.startswith(default_line_root + os.sep)))
-        )
-        if not is_safe_child:
+        # Standard CodeQL sanitized path pattern: os.path.normpath(os.path.join(base_path, rel_part))
+        fullpath = os.path.normpath(os.path.join(base_path, rel_part))
+        if not (fullpath == base_path or fullpath.startswith(base_path + os.sep)):
             return None
 
-        if not os.path.isdir(normalized):
+        if not os.path.isdir(fullpath):
             return None
-        return normalized
+        return fullpath
 
     def _resolve_safe_reader_script(self, user_script: str | None) -> str | None:
         """Resolve and validate line-desktop-mcp reader script path against path injection."""
