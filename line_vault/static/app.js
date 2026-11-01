@@ -1200,7 +1200,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let latestDownloadUrl = "";
   let latestReleasePageUrl = "https://github.com/SanHsien/line-vault/releases";
   let repoHomeUrl = "https://github.com/SanHsien/line-vault";
-  const btnVisitGitHub = document.getElementById("btnVisitGitHub");
 
   async function openSystemBrowser(targetUrl) {
     const url = targetUrl || repoHomeUrl;
@@ -1227,11 +1226,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  if (btnVisitGitHub) {
-    btnVisitGitHub.addEventListener("click", () => {
-      openSystemBrowser(repoHomeUrl);
-    });
-  }
 
   async function openAboutModal() {
     if (!aboutModal) return;
