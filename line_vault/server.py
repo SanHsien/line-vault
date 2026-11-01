@@ -794,9 +794,15 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
 
-        with open(fullpath, "rb") as f:
-            while chunk := f.read(65536):
-                self.wfile.write(chunk)
+        try:
+            with open(fullpath, "rb") as f:
+                while chunk := f.read(65536):
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+        except (OSError, ValueError):
+            return
 
 
 def create_server(
