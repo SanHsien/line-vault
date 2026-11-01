@@ -647,17 +647,31 @@ document.addEventListener("DOMContentLoaded", () => {
         mediaHtml = `
           <div class="media-preview-box">
             <a href="/api/media/file/${m.media_id}" target="_blank" title="點擊檢視原圖">
-              <img src="/api/media/file/${m.media_id}" alt="${escapeHtml(m.file_name || '相片')}" loading="lazy" />
+              <img src="/api/media/file/${m.media_id}" alt="${escapeHtml(m.file_name || '相片')}" loading="lazy" onerror="this.closest('.media-preview-box').style.display='none'; const fb = this.closest('.message-bubble').querySelector('.pending-media-box'); if (fb) fb.style.display='flex';" />
             </a>
+          </div>
+          <div class="pending-media-box" style="display:none;padding:10px 14px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px dashed var(--border-color);margin-top:6px;align-items:center;gap:10px;">
+            <span style="font-size:22px;">🖼️</span>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Photo]" : "[相片]"))}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Full-res original awaiting download. Use LINE 'Photos/Videos -> Select All Download' or Vault 'Scan Cache'." : "高畫質原檔尚待本機快取。可在 LINE「照片．影片」清單全選下載，或於金庫執行「掃描快取資料夾」批次打撈。"}</div>
+            </div>
           </div>
         `;
       } else if (m.media_id && m.media_type === "video") {
         mediaHtml = `
           <div class="media-preview-box">
-            <video controls preload="metadata">
+            <video controls preload="metadata" onerror="this.closest('.media-preview-box').style.display='none'; const fb = this.closest('.message-bubble').querySelector('.pending-media-box'); if (fb) fb.style.display='flex';">
               <source src="/api/media/file/${m.media_id}" type="${m.mime_type || 'video/mp4'}">
               您的瀏覽器不支援影片播放。
             </video>
+          </div>
+          <div class="pending-media-box" style="display:none;padding:10px 14px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px dashed var(--border-color);margin-top:6px;align-items:center;gap:10px;">
+            <span style="font-size:22px;">🎬</span>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Video]" : "[影片]"))}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Video original awaiting download. Batch download in LINE or use Vault 'Scan Cache'." : "影片原檔尚待本機快取。可在 LINE「照片．影片」清單全選下載，或於金庫執行「掃描快取資料夾」批次打撈。"}</div>
+            </div>
           </div>
         `;
       } else if (m.content_type === "image" && !m.media_id) {
@@ -666,7 +680,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <span style="font-size:22px;">🖼️</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Photo]" : "[相片]"))}</div>
-              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Original not yet cached in LINE Desktop. Click 'Sync LINE Chats' or open in LINE to download." : "原檔尚未快取至本機 LINE。點擊右上角「同步 LINE 訊息」或在 LINE 中點開即可自動歸檔"}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Full-res original awaiting download. Use LINE 'Photos/Videos -> Select All Download' or Vault 'Scan Cache'." : "高畫質原檔尚待本機快取。可在 LINE「照片．影片」清單全選下載，或於金庫執行「掃描快取資料夾」批次打撈。"}</div>
             </div>
           </div>
         `;
@@ -676,7 +690,7 @@ document.addEventListener("DOMContentLoaded", () => {
             <span style="font-size:22px;">🎬</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Video]" : "[影片]"))}</div>
-              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Video original pending download in local LINE. Open in LINE to cache." : "影片原檔待自本機 LINE 下載快取。在 LINE 中點播後即可自動永久保存"}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Video original awaiting download. Batch download in LINE or use Vault 'Scan Cache'." : "影片原檔尚待本機快取。可在 LINE「照片．影片」清單全選下載，或於金庫執行「掃描快取資料夾」批次打撈。"}</div>
             </div>
           </div>
         `;
