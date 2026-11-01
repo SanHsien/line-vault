@@ -197,6 +197,35 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // GUI Chat History Import Elements
   const txtImportSectionTitle = document.getElementById("txtImportSectionTitle");
+  // Live Timer & Status Progress Elements
+  const globalSyncBanner = document.getElementById("globalSyncBanner");
+  const globalSyncBannerText = document.getElementById("globalSyncBannerText");
+  const globalSyncBannerBadge = document.getElementById("globalSyncBannerBadge");
+  const syncModalTimerNotice = document.getElementById("syncModalTimerNotice");
+  const syncModalTimerText = document.getElementById("syncModalTimerText");
+  const importTimerNotice = document.getElementById("importTimerNotice");
+  const importTimerText = document.getElementById("importTimerText");
+
+  function createProgressTimer(onTick) {
+    const startTs = Date.now();
+    let currentFormatted = "00:00";
+    onTick(currentFormatted, 0);
+    const timerId = setInterval(() => {
+      const elapsedSec = Math.floor((Date.now() - startTs) / 1000);
+      const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
+      const ss = String(elapsedSec % 60).padStart(2, "0");
+      currentFormatted = `${mm}:${ss}`;
+      onTick(currentFormatted, elapsedSec);
+    }, 1000);
+
+    return {
+      stop: () => {
+        clearInterval(timerId);
+        return currentFormatted;
+      },
+    };
+  }
+
   const inputImportChatName = document.getElementById("inputImportChatName");
   const inputChatTxtFile = document.getElementById("inputChatTxtFile");
   const btnTriggerFileSelect = document.getElementById("btnTriggerFileSelect");
@@ -1047,11 +1076,21 @@ document.addEventListener("DOMContentLoaded", () => {
     btnSeedDemo.addEventListener("click", () => triggerSeedDemo());
   }
 
-  // Manual LINE Sync Button in Top Header
+  // Manual LINE Sync Button in Top Header with live stopwatch timer
   if (btnManualSync) {
     btnManualSync.addEventListener("click", async () => {
       btnManualSync.disabled = true;
-      btnManualSync.innerHTML = "<span>⏳</span> 正在同步 LINE 訊息...";
+      if (globalSyncBanner) globalSyncBanner.style.display = "flex";
+
+      const timer = createProgressTimer((timeStr) => {
+        btnManualSync.innerHTML = `<span>⏳</span> ${currentLang === "en" ? "Syncing" : "同步中"} (${timeStr})...`;
+        if (globalSyncBannerText) {
+          globalSyncBannerText.textContent = currentLang === "en"
+            ? `Syncing local LINE database & media... Elapsed ${timeStr} (Application is actively working, please wait)`
+            : `正在同步本機 LINE 最新對話紀錄與防過期媒體... 已耗時 ${timeStr}（程式持續運作中，請稍候）`;
+        }
+      });
+
       try {
         const res = await fetch("/api/sync-mcp", {
           method: "POST",
@@ -1059,10 +1098,29 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({ days: 0 }),
         });
         const data = await res.json();
+        const totalDuration = timer.stop();
+
         if (res.ok && data.success) {
           const sr = data.sync_result || {};
+          if (globalSyncBannerText) {
+            globalSyncBannerText.textContent = currentLang === "en"
+              ? `✅ Sync complete in ${totalDuration}! (${sr.chats_synced || 0} chats, ${sr.messages_synced || 0} msgs)`
+              : `✅ 本機 LINE 同步完成！共耗時 ${totalDuration}（同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息）`;
+          }
+          if (globalSyncBannerBadge) {
+            globalSyncBannerBadge.textContent = currentLang === "en" ? "Finished" : "完成";
+            globalSyncBannerBadge.style.background = "var(--accent-green)";
+          }
+          setTimeout(() => {
+            if (globalSyncBanner) globalSyncBanner.style.display = "none";
+            if (globalSyncBannerBadge) {
+              globalSyncBannerBadge.textContent = currentLang === "en" ? "In Progress" : "進行中";
+              globalSyncBannerBadge.style.background = "var(--accent-blue)";
+            }
+          }, 4000);
+
           showToast(
-            `LINE 手動同步完成！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息，歸檔 ${sr.media_archived || 0} 件媒體！`,
+            `LINE 手動同步完成（耗時 ${totalDuration}）！同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則訊息，歸檔 ${sr.media_archived || 0} 件媒體！`,
             "🔄"
           );
           await fetchStatus();
@@ -1074,9 +1132,13 @@ document.addEventListener("DOMContentLoaded", () => {
             selectChat(chatsCache[0]);
           }
         } else {
+          timer.stop();
+          if (globalSyncBanner) globalSyncBanner.style.display = "none";
           showToast(data.error || "手動同步未完成，請確認本機 LINE 是否已開啟", "⚠️");
         }
       } catch (err) {
+        timer.stop();
+        if (globalSyncBanner) globalSyncBanner.style.display = "none";
         showToast("同步出錯: " + err.message, "❌");
       } finally {
         btnManualSync.disabled = false;
@@ -1415,16 +1477,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Sync Built-in Native Engine Button in Modal (unlimited all-time days=0)
+  // Sync Built-in Native Engine Button in Modal with live stopwatch timer
   if (btnModalSyncMcp) {
     btnModalSyncMcp.addEventListener("click", async () => {
       btnModalSyncMcp.disabled = true;
-      btnModalSyncMcp.innerHTML = "<span>⏳</span> 內建引擎同步中...";
+      if (syncModalTimerNotice) syncModalTimerNotice.style.display = "block";
+
+      const timer = createProgressTimer((timeStr) => {
+        btnModalSyncMcp.innerHTML = `<span>⏳</span> ${currentLang === "en" ? "Syncing" : "內建引擎同步中"} (${timeStr})...`;
+        if (syncModalTimerText) {
+          syncModalTimerText.textContent = currentLang === "en"
+            ? `Elapsed ${timeStr} (Decrypting SQLite database & archiving stickers/media, working steadily...)`
+            : `已耗時 ${timeStr}（正在解密本機 LINE 資料庫與永久歸檔貼圖媒體，程式持續運行中，請稍候...）`;
+        }
+      });
 
       const chatName = inputTargetChatName.value.trim() || null;
       const cacheDir = inputLineDataDir.value.trim() || null;
 
-      // Persist preferences
       localStorage.setItem("line_vault_line_data_dir", inputLineDataDir.value.trim());
       localStorage.setItem("line_vault_target_chat", inputTargetChatName.value.trim());
 
@@ -1439,11 +1509,14 @@ document.addEventListener("DOMContentLoaded", () => {
           }),
         });
         const data = await res.json();
+        const totalDuration = timer.stop();
+
         if (res.ok && data.success) {
           const sr = data.sync_result || {};
+          if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
           if (settingsModal) settingsModal.style.display = "none";
           showToast(
-            `內建引擎同步完成！全時間範圍同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則紀錄，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
+            `內建引擎同步完成（耗時 ${totalDuration}）！全時間範圍同步 ${sr.chats_synced || 0} 個聊天室、${sr.messages_synced || 0} 則紀錄，永久歸檔 ${sr.media_archived || 0} 件媒體！`,
             "🔐"
           );
           await fetchStatus();
@@ -1455,9 +1528,13 @@ document.addEventListener("DOMContentLoaded", () => {
             loadChatInsight(currentChatId);
           }
         } else {
+          timer.stop();
+          if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
           showToast(data.error || "同步失敗，請檢查設定與 LINE 目錄", "❌");
         }
       } catch (err) {
+        timer.stop();
+        if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
         showToast("同步出錯: " + err.message, "❌");
       } finally {
         btnModalSyncMcp.disabled = false;
@@ -1466,11 +1543,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Scan Line Cache Button in Modal
+  // Scan Line Cache Button in Modal with live stopwatch timer
   if (btnModalScanLine) {
     btnModalScanLine.addEventListener("click", async () => {
       btnModalScanLine.disabled = true;
-      btnModalScanLine.innerHTML = "<span>⏳</span> 正在掃描快取...";
+      if (syncModalTimerNotice) syncModalTimerNotice.style.display = "block";
+
+      const timer = createProgressTimer((timeStr) => {
+        btnModalScanLine.innerHTML = `<span>⏳</span> ${currentLang === "en" ? "Scanning" : "正在掃描快取"} (${timeStr})...`;
+        if (syncModalTimerText) {
+          syncModalTimerText.textContent = currentLang === "en"
+            ? `Elapsed ${timeStr} (Scanning and restoring LINE local cached assets, please wait...)`
+            : `已耗時 ${timeStr}（正在掃描與還原 LINE 本機快取媒體檔案，請稍候...）`;
+        }
+      });
 
       const cacheDir = inputLineDataDir.value.trim() || "";
       localStorage.setItem("line_vault_line_data_dir", cacheDir);
@@ -1482,10 +1568,13 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({ cache_dir: cacheDir }),
         });
         const data = await res.json();
+        const totalDuration = timer.stop();
+
         if (res.ok && data.success) {
           const sr = data.scan_result || {};
+          if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
           showToast(
-            `快取掃描完成：檢查 ${sr.files_inspected || 0} 檔、歸檔 ${sr.media_imported || 0} 件媒體！`,
+            `快取掃描完成（耗時 ${totalDuration}）：檢查 ${sr.files_inspected || 0} 檔、歸檔 ${sr.media_imported || 0} 件媒體！`,
             "🔄"
           );
           await fetchStatus();
@@ -1496,9 +1585,13 @@ document.addEventListener("DOMContentLoaded", () => {
             loadCenterContent();
           }
         } else {
+          timer.stop();
+          if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
           showToast(data.error || "找不到指定的快取目錄", "⚠️");
         }
       } catch (err) {
+        timer.stop();
+        if (syncModalTimerNotice) syncModalTimerNotice.style.display = "none";
         showToast("快取掃描出錯: " + err.message, "❌");
       } finally {
         btnModalScanLine.disabled = false;
@@ -1714,7 +1807,16 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       btnImportTxt.disabled = true;
-      btnImportTxt.innerHTML = "<span>⏳ 正在解析並匯入...</span>";
+      if (importTimerNotice) importTimerNotice.style.display = "block";
+
+      const timer = createProgressTimer((timeStr) => {
+        btnImportTxt.innerHTML = `<span>⏳ ${currentLang === "en" ? "Importing" : "正在解析並匯入"} (${timeStr})...</span>`;
+        if (importTimerText) {
+          importTimerText.textContent = currentLang === "en"
+            ? `Elapsed ${timeStr} (Parsing messages and running AI analysis, please wait...)`
+            : `已耗時 ${timeStr}（正在解析文字對話並執行 AI 智慧分析，程式正常運作中，請稍候...）`;
+        }
+      });
 
       const chatName = inputImportChatName ? (inputImportChatName.value.trim() || selectedImportFileName.replace(/\.txt$/i, "")) : selectedImportFileName;
       try {
@@ -1728,10 +1830,13 @@ document.addEventListener("DOMContentLoaded", () => {
           }),
         });
         const data = await res.json();
+        const totalDuration = timer.stop();
+
         if (res.ok && data.success) {
           const ir = data.import_result || {};
+          if (importTimerNotice) importTimerNotice.style.display = "none";
           showToast(
-            `匯入成功！聊天室「${ir.chat_name}」匯入 ${ir.imported_messages} 則對話，AI 已分析！`,
+            `匯入成功（耗時 ${totalDuration}）！聊天室「${ir.chat_name}」匯入 ${ir.imported_messages} 則對話，AI 已分析！`,
             "📄"
           );
           if (settingsModal) settingsModal.style.display = "none";
@@ -1744,9 +1849,13 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } else {
+          timer.stop();
+          if (importTimerNotice) importTimerNotice.style.display = "none";
           showToast(data.error || "匯入失敗，請確認檔案格式", "❌");
         }
       } catch (err) {
+        timer.stop();
+        if (importTimerNotice) importTimerNotice.style.display = "none";
         showToast("匯入錯誤: " + err.message, "❌");
       } finally {
         btnImportTxt.disabled = false;

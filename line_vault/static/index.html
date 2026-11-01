@@ -14,7 +14,7 @@
         <span class="logo-icon">🛡️</span>
       </div>
       <div class="title-box">
-        <h1>LINE Vault <span class="badge-beta">v1.1.0</span></h1>
+        <h1>LINE Vault <span class="badge-beta">v1.3.0</span></h1>
         <p class="subtitle" id="i18nSubtitle">Windows 11 本地對話與防過期媒體管理中心</p>
       </div>
     </div>
@@ -147,6 +147,15 @@
         </button>
       </nav>
 
+      <!-- Real-time Synchronization Progress Banner with Stopwatch Timer -->
+      <div id="globalSyncBanner" class="global-sync-banner" style="display:none;padding:8px 14px;background:rgba(37,99,235,0.12);border-bottom:1px solid rgba(37,99,235,0.25);font-size:12px;display:flex;align-items:center;justify-content:space-between;color:var(--text-main);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span>⏱️</span>
+          <span id="globalSyncBannerText">正在同步本機 LINE 最新對話紀錄與防過期媒體... 已耗時 00:00（程式持續運作中，請稍候）</span>
+        </div>
+        <span id="globalSyncBannerBadge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--accent-blue);color:#fff;font-weight:600;">進行中</span>
+      </div>
+
       <!-- Filter / Date Range Bar -->
       <div class="filter-bar">
         <div class="filter-dates">
@@ -272,6 +281,10 @@
             <span>🔄 掃描本機 LINE 快取資料夾</span>
           </button>
         </div>
+        <div id="syncModalTimerNotice" class="sync-timer-notice" style="display:none;margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);font-size:12px;color:var(--text-main);line-height:1.5;">
+          <span style="display:inline-block;margin-right:6px;">⏱️</span>
+          <span id="syncModalTimerText">已耗時 00:00（正在解密本機 LINE 資料庫與永久歸檔貼圖媒體，程式持續運行中，請稍候...）</span>
+        </div>
 
         <div class="settings-divider"></div>
 
@@ -295,6 +308,10 @@
           <button id="btnImportTxt" class="btn btn-primary" style="width:100%;margin-top:8px;justify-content:center;" disabled>
             <span id="txtBtnStartImport">開始解析匯入</span>
           </button>
+          <div id="importTimerNotice" class="import-timer-notice" style="display:none;margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);font-size:12px;color:var(--text-main);line-height:1.5;">
+            <span style="display:inline-block;margin-right:6px;">⏱️</span>
+            <span id="importTimerText">已耗時 00:00（正在解析文字對話並執行 AI 智慧分析，程式正常運作中，請稍候...）</span>
+          </div>
         </div>
 
         <div class="settings-divider"></div>
@@ -388,7 +405,7 @@
           <div class="settings-status-grid" style="margin-top:12px;">
             <div class="settings-status-item">
               <span class="label">目前版本：</span>
-              <span class="val tag-green" id="aboutVersion">v1.1.0</span>
+              <span class="val tag-green" id="aboutVersion">v1.3.0</span>
             </div>
             <div class="settings-status-item">
               <span class="label">開發作者：</span>

@@ -13,7 +13,7 @@ from line_vault.crypto import (
 )
 from line_vault.db import VaultDB
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 APP_NAME = "LINE Vault — 本地對話與防過期媒體中心"
 APP_VERSION = __version__
 APP_AUTHOR = "SanHsien"
