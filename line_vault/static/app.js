@@ -1299,6 +1299,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       try {
         const res = await fetch("/api/check-update");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.download_exe_url) latestDownloadUrl = data.download_exe_url;
         if (data.release_url) latestReleasePageUrl = data.release_url;
@@ -1308,16 +1309,19 @@ document.addEventListener("DOMContentLoaded", () => {
             <div style="font-weight:700;color:${statusColor};margin-bottom:4px;">
               ${data.has_update ? "🚀 發現新版本！" : "✅ 目前已是最新版本"}
             </div>
-            <div>目前版本：<b>v${escapeHtml(data.current_version || "1.0.0")}</b> ｜ 最新版本：<b>v${escapeHtml(data.latest_version || "1.0.0")}</b></div>
-            <div style="color:var(--text-muted);margin-top:4px;">${escapeHtml(data.message || "")}</div>
+            <div>目前版本：<b>v${escapeHtml(data.current_version || "1.4.3")}</b> ｜ 最新版本：<b>v${escapeHtml(data.latest_version || data.current_version || "1.4.3")}</b></div>
+            <div style="color:var(--text-muted);margin-top:4px;">${escapeHtml(data.message || (data.has_update ? "請點擊右方綠色按鈕一鍵下載最新版。" : "您的 LINE Vault 處於最新狀態。"))}</div>
           `;
         }
         showToast(data.message || "已完成版本更新檢查", data.has_update ? "🚀" : "✅");
       } catch (err) {
         if (updateStatusBox) {
-          updateStatusBox.textContent = "檢查更新失敗: " + err.message;
+          updateStatusBox.innerHTML = `
+            <div style="font-weight:700;color:var(--accent-amber);margin-bottom:4px;">⚠️ 檢查更新連線逾時</div>
+            <div style="color:var(--text-muted);font-size:12px;">無法直接連線至 GitHub API (${escapeHtml(err.message)})。您可以直接至官方 Releases 頁面下載最新版。</div>
+          `;
         }
-        showToast("檢查更新失敗", "⚠️");
+        showToast("檢查更新連線異常: " + err.message, "⚠️");
       } finally {
         btnCheckUpdate.disabled = false;
         btnCheckUpdate.innerHTML = "<span>🔄 檢查更新</span>";

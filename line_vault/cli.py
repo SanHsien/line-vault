@@ -144,24 +144,17 @@ def launch_gui(
             webbrowser.open(app_url)
 
     try:
-        start_ts = time.time()
         while srv_thread.is_alive():
             now = time.time()
             # 1. Window close beacon received and grace period elapsed (prevents accidental exit on F5)
             pending = getattr(server, "shutdown_pending_time", None)
-            if pending is not None and (now - pending) >= 1.2:
+            if pending is not None and (now - pending) >= 3.0:
                 break
 
-            # 2. Heartbeat loss after client was active (> 7.0 seconds of no heartbeats)
+            # 2. Heartbeat loss after client was active (> 180.0 seconds of no heartbeats)
             if not no_window and getattr(server, "has_active_client", False):
                 last_hb = getattr(server, "last_heartbeat_time", now)
                 if (now - last_hb) > 180.0:
-                    break
-
-            # 3. Dedicated browser process exited
-            if app_proc is not None:
-                ret = app_proc.poll()
-                if ret is not None and (now - start_ts) > 1.0:
                     break
 
             time.sleep(0.3)

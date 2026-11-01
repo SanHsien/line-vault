@@ -626,7 +626,13 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             asset_type = str(body.get("asset_type") or "exe").strip().lower()
             asset_name = "LINE-Vault-win64.zip" if asset_type == "zip" else "LINE-Vault-win64.exe"
-            dl_url = f"{GITHUB_REPO_URL}/releases/latest/download/{asset_name}"
+            user_url = str(body.get("download_url") or "").strip()
+            if user_url and (user_url.startswith("https://github.com/") or user_url.startswith("https://objects.githubusercontent.com/")):
+                dl_url = user_url
+                if dl_url.lower().endswith(".zip"):
+                    asset_name = "LINE-Vault-win64.zip"
+            else:
+                dl_url = f"{GITHUB_REPO_URL}/releases/latest/download/{asset_name}"
 
             downloads_dir = Path.home() / "Downloads"
             if not downloads_dir.exists():
@@ -635,9 +641,12 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             try:
                 req = urllib.request.Request(
                     dl_url,
-                    headers={"User-Agent": f"LINE-Vault/{APP_VERSION}"},
+                    headers={
+                        "User-Agent": f"LINE-Vault/{APP_VERSION}",
+                        "Accept": "application/octet-stream, */*",
+                    },
                 )
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=60) as resp:
                     data_bytes = resp.read()
                 dest_path.write_bytes(data_bytes)
                 return self._send_json({
