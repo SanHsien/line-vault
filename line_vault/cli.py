@@ -153,7 +153,7 @@ def launch_gui(
             # 2. Heartbeat loss after client was active (> 7.0 seconds of no heartbeats)
             if not no_window and getattr(server, "has_active_client", False):
                 last_hb = getattr(server, "last_heartbeat_time", now)
-                if (now - last_hb) > 7.0:
+                if (now - last_hb) > 180.0:
                     break
 
             # 3. Dedicated browser process exited

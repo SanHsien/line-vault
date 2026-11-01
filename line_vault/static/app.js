@@ -656,6 +656,26 @@ document.addEventListener("DOMContentLoaded", () => {
             </video>
           </div>
         `;
+      } else if (m.content_type === "image" && !m.media_id) {
+        mediaHtml = `
+          <div class="pending-media-box" style="padding:10px 14px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px dashed var(--border-color);margin-top:6px;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:22px;">🖼️</span>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Photo]" : "[相片]"))}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Original not yet cached in LINE Desktop. Click 'Sync LINE Chats' or open in LINE to download." : "原檔尚未快取至本機 LINE。點擊右上角「同步 LINE 訊息」或在 LINE 中點開即可自動歸檔"}</div>
+            </div>
+          </div>
+        `;
+      } else if (m.content_type === "video" && !m.media_id) {
+        mediaHtml = `
+          <div class="pending-media-box" style="padding:10px 14px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px dashed var(--border-color);margin-top:6px;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:22px;">🎬</span>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:600;color:var(--text-main);">${escapeHtml(m.text_content || (currentLang === "en" ? "[Video]" : "[影片]"))}</div>
+              <div style="font-size:11px;color:var(--text-muted);">${currentLang === "en" ? "Video original pending download in local LINE. Open in LINE to cache." : "影片原檔待自本機 LINE 下載快取。在 LINE 中點播後即可自動永久保存"}</div>
+            </div>
+          </div>
+        `;
       } else if (m.media_id || m.file_name) {
         const icon = m.format_name === "pdf" ? "📄" : (m.format_name === "zip" ? "📦" : "📎");
         const fileUrl = m.media_id ? `/api/media/file/${m.media_id}` : "#";
@@ -2202,6 +2222,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   sendHeartbeat();
   setInterval(sendHeartbeat, 2500);
+
+  // Resume heartbeat immediately on focus / visibilitychange to prevent sleep timeout
+  window.addEventListener("focus", sendHeartbeat);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      sendHeartbeat();
+    }
+  });
 
   window.addEventListener("pagehide", () => {
     if (navigator.sendBeacon) {

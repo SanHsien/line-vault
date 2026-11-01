@@ -140,7 +140,7 @@ def sniff_media_format(data: bytes, fallback_filename: str | None = None) -> dic
         mime_type = "video/mp4"
         ext = ".mp4"
     elif data_bytes.startswith(b"ID3") or (
-        size >= 2 and data_bytes[0] == 0xFF and (data_bytes[1] & 0xE0) == 0xE0
+        size >= 4 and data_bytes[0] == 0xFF and (data_bytes[1] & 0xFE) in (0xFA, 0xF2, 0xE2) and (data_bytes[2] & 0xF0) not in (0x00, 0xF0)
     ):
         media_type = "audio"
         format_name = "mp3"

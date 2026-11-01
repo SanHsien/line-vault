@@ -1390,7 +1390,7 @@ def test_unlimited_txt_messages_and_delete_clear_about_apis(tmp_path: Path):
         # Verify GET /api/about returns app metadata
         with urllib.request.urlopen(f"{base_url}/api/about") as resp:
             about = json.loads(resp.read().decode("utf-8"))
-            assert about["version"] == "1.4.2"
+            assert about["version"] == "1.4.3"
             assert about["author"] == "SanHsien"
             assert "github.com/SanHsien/line-vault" in about["github_repo_url"]
 

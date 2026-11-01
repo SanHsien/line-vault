@@ -1,4 +1,4 @@
-"""Zero-dependency HTTP server and REST API for LINE Vault built with ThreadingHTTPServer."""
+﻿"""Zero-dependency HTTP server and REST API for LINE Vault built with ThreadingHTTPServer."""
 
 import json
 import os
@@ -740,13 +740,36 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             return self._send_error("File on disk not found", status=404)
 
         file_path = Path(fullpath)
-        mime_type = media.get("mime_type") or "application/octet-stream"
         file_size = os.path.getsize(fullpath)
+        m_type = media.get("media_type")
+
+        # Guard against undecodable/encrypted media on disk (e.g. b'\xb5\xb5' raw LINE cache)
+        if m_type == "image":
+            is_valid_img = False
+            try:
+                with open(fullpath, "rb") as f_probe:
+                    head = f_probe.read(16)
+                if head.startswith(b"\xff\xd8\xff") or head.startswith(b"\x89PNG\r\n\x1a\n") or head.startswith(b"GIF8") or (len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
+                    is_valid_img = True
+            except OSError:
+                pass
+
+            if not is_valid_img:
+                # Deliver a safe 1x1 transparent PNG to prevent browser broken-image icon and FastStone format alert
+                TRANSPARENT_PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB\x82"
+                self.send_response(200)
+                self._send_cors_headers()
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(TRANSPARENT_PNG)))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(TRANSPARENT_PNG)
+                return
+
+        mime_type = media.get("mime_type") or "application/octet-stream"
         filename = media.get("file_name") or file_path.name
         safe_ascii_name = re.sub(r"[^A-Za-z0-9_.\-]", "_", filename)
         safe_utf8_name = urllib.parse.quote(filename)
-
-        m_type = media.get("media_type")
         disposition_type = "inline" if m_type in ("image", "video", "audio") else "attachment"
 
         self.send_response(200)

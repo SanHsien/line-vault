@@ -1,4 +1,4 @@
-"""Media archiver for LINE E2EE media payloads, cache scanning, and demo seeding."""
+﻿"""Media archiver for LINE E2EE media payloads, cache scanning, and demo seeding."""
 
 import datetime
 import hashlib
@@ -196,6 +196,10 @@ class MediaArchiver:
                         if deobf_info["format"] != "bin":
                             thumb_decrypted = deobf
                             info = deobf_info
+
+                    if info.get("format") == "bin" or info.get("media_type") not in ("image", "video"):
+                        # Thumbnail is still encrypted or undecodable; do not save corrupt file with .jpg extension
+                        return {"status": "thumb_undecodable", "message_id": message_id}
                     folder_name = self._get_chat_folder_name(chat_id)
                     safe_msg = _sanitize_path_part(message_id)
                     storage_root = self._get_storage_root()
