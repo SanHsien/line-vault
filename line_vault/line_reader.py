@@ -217,7 +217,7 @@ def find_line_process_pid() -> int | None:
             return found[0] if len(found) == 1 else (found[-1] if found else None)
         finally:
             kernel.CloseHandle(handle)
-    except Exception:
+    except (OSError, ValueError, AttributeError, RuntimeError):
         return None
 
 
@@ -303,7 +303,7 @@ def _try_warm_locator_window(pid: int, page1_raw: bytes, cache_paths: list[Path]
                 if buf is not None:
                     ct.memset(buf, 0, len(buf))
                 kernel.CloseHandle(handle)
-        except Exception:
+        except (OSError, ValueError, AttributeError, RuntimeError):
             continue
     return None
 

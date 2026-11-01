@@ -127,8 +127,9 @@ def launch_gui(
                 f"--user-data-dir={profile_dir}",
                 "--disable-extensions",
                 "--disable-component-extensions-with-background-pages",
+                "--disable-background-mode",
                 "--disable-sync",
-                "--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2,msHubApps,msEdgeCollections",
+                "--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2,msHubApps,msEdgeCollections,msEdgeStartupBoost",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--window-size=1440,900",
@@ -142,22 +143,36 @@ def launch_gui(
 
     try:
         start_ts = time.time()
-        proc_owned = False
         while srv_thread.is_alive():
+            now = time.time()
+            # 1. Window close beacon received and grace period elapsed (prevents accidental exit on F5)
+            pending = getattr(server, "shutdown_pending_time", None)
+            if pending is not None and (now - pending) >= 1.2:
+                break
+
+            # 2. Heartbeat loss after client was active (> 7.0 seconds of no heartbeats)
+            if not no_window and getattr(server, "has_active_client", False):
+                last_hb = getattr(server, "last_heartbeat_time", now)
+                if (now - last_hb) > 7.0:
+                    break
+
+            # 3. Dedicated browser process exited
             if app_proc is not None:
                 ret = app_proc.poll()
-                elapsed = time.time() - start_ts
-                if ret is None and elapsed > 2.5:
-                    # Browser stayed alive in our isolated profile; when it closes, stop server
-                    proc_owned = True
-                elif ret is not None and proc_owned:
+                if ret is not None and (now - start_ts) > 1.0:
                     break
-            time.sleep(0.5)
+
+            time.sleep(0.3)
     except KeyboardInterrupt:
         pass
     finally:
         server.shutdown()
         server.server_close()
+        if app_proc is not None and app_proc.poll() is None:
+            try:
+                app_proc.terminate()
+            except OSError:
+                pass
 
     return 0
 

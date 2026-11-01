@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -120,7 +121,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             candidate = line_base / "Data"
             default_line_dir = str(candidate if candidate.exists() else line_base)
 
-        if not user_dir or not str(user_dir).strip():
+        if not user_dir or not isinstance(user_dir, str) or not str(user_dir).strip():
             return default_line_dir if (default_line_dir and os.path.isdir(default_line_dir)) else None
 
         user_dir_str = str(user_dir).strip()
@@ -132,16 +133,36 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         ):
             return default_line_dir if os.path.isdir(default_line_dir) else None
 
-        base_root = os.path.normpath(os.path.realpath(str(self.allowed_scan_root)))
-        fullpath = os.path.normpath(os.path.realpath(user_dir_str))
-        allowed_by_root = fullpath.startswith(base_root) or bool(
-            default_line_root and fullpath.startswith(default_line_root)
-        )
-        if not allowed_by_root:
+        if any(c in user_dir_str for c in "\x00\r\n\t"):
             return None
-        if not os.path.isdir(fullpath):
+
+        try:
+            resolved_user = Path(user_dir_str).resolve()
+            resolved_base = Path(self.allowed_scan_root).resolve()
+            user_path_str = str(resolved_user)
+            base_path_str = str(resolved_base)
+
+            allowed = False
+            try:
+                if os.path.commonpath([base_path_str, user_path_str]) == base_path_str:
+                    allowed = True
+            except (ValueError, OSError):
+                pass
+
+            if not allowed and default_line_root:
+                resolved_line = Path(default_line_root).resolve()
+                line_path_str = str(resolved_line)
+                try:
+                    if os.path.commonpath([line_path_str, user_path_str]) == line_path_str:
+                        allowed = True
+                except (ValueError, OSError):
+                    pass
+
+            if not allowed or not resolved_user.is_dir():
+                return None
+            return user_path_str
+        except (ValueError, OSError):
             return None
-        return fullpath
 
     def _resolve_safe_reader_script(self, user_script: str | None) -> str | None:
         """Resolve and validate line-desktop-mcp reader script path against path injection."""
@@ -429,22 +450,34 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             if not selected_path and os.environ.get("PYTEST_CURRENT_TEST"):
                 selected_path = init_dir or str(self.server_vault_dir)
             elif not selected_path and sys.platform == "win32":
+                safe_init_dir = ""
+                bad_chars = set("'\"`;$<>|?*\x00\r\n\t")
+                if init_dir and re.match(r"^[a-zA-Z]:\\", init_dir) and not any(c in bad_chars for c in init_dir):
+                    try:
+                        resolved_init = Path(init_dir).resolve()
+                        if resolved_init.is_dir():
+                            safe_init_dir = str(resolved_init)
+                    except (ValueError, OSError):
+                        pass
+
                 try:
                     ps_script = (
                         "Add-Type -AssemblyName System.Windows.Forms; "
                         "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
                         "$f.Description = '請選擇 LINE Vault 媒體保存目錄'; "
                         "$f.ShowNewFolderButton = $true; "
-                    )
-                    if init_dir and os.path.isdir(init_dir):
-                        ps_script += f"$f.SelectedPath = '{init_dir}'; "
-                    ps_script += (
+                        "if ($args.Count -gt 0 -and (Test-Path -LiteralPath $args[0] -PathType Container)) { "
+                        "$f.SelectedPath = $args[0] "
+                        "}; "
                         "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
                         "Write-Output $f.SelectedPath "
                         "}"
                     )
+                    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script]
+                    if safe_init_dir:
+                        cmd.append(safe_init_dir)
                     proc = subprocess.run(
-                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                        cmd,
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
@@ -452,8 +485,10 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                         check=False,
                     )
                     out = proc.stdout.strip()
-                    if out and os.path.isdir(out):
-                        selected_path = out
+                    if out and re.match(r"^[a-zA-Z]:\\", out) and not any(c in bad_chars for c in out):
+                        resolved_out = Path(out).resolve()
+                        if resolved_out.is_dir():
+                            selected_path = str(resolved_out)
                 except (subprocess.SubprocessError, OSError):
                     selected_path = ""
             return self._send_json({"status": "ok", "selected_path": selected_path})
@@ -585,34 +620,53 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             stats = self.db.get_dashboard_stats()
             return self._send_json({"success": True, "clear_result": clear_res, "stats": stats})
 
+        # POST /api/heartbeat
+        if path == "/api/heartbeat":
+            self.server.last_heartbeat_time = time.time()
+            self.server.has_active_client = True
+            self.server.shutdown_pending_time = None
+            return self._send_json({"status": "alive"})
+
+        # POST /api/shutdown
+        if path == "/api/shutdown":
+            self.server.shutdown_pending_time = time.time()
+            return self._send_json({"status": "shutdown_pending"})
+
         # POST /api/open-url
         if path == "/api/open-url":
             body = self._read_json_body()
-            target_url = str(body.get("url") or GITHUB_REPO_URL).strip()
-            if not target_url.startswith(GITHUB_REPO_URL):
-                return self._send_error("Only official repository URLs are permitted", status=400)
+            requested_url = str(body.get("url") or "").strip()
+            ALLOWED_URLS = {
+                GITHUB_REPO_URL: GITHUB_REPO_URL,
+                GITHUB_RELEASES_URL: GITHUB_RELEASES_URL,
+                f"{GITHUB_REPO_URL}/": f"{GITHUB_REPO_URL}/",
+                f"{GITHUB_REPO_URL}/releases": f"{GITHUB_REPO_URL}/releases",
+                f"{GITHUB_REPO_URL}/releases/latest": f"{GITHUB_REPO_URL}/releases/latest",
+            }
+            target_url = ALLOWED_URLS.get(requested_url)
+            if not target_url and requested_url.startswith(f"{GITHUB_REPO_URL}/"):
+                safe_suffix = re.sub(r"[^a-zA-Z0-9\-_./]", "", requested_url[len(GITHUB_REPO_URL):])
+                target_url = f"{GITHUB_REPO_URL}{safe_suffix}"
+            if not target_url:
+                target_url = GITHUB_REPO_URL
+
             try:
-                if hasattr(os, "startfile"):
-                    os.startfile(target_url)  # type: ignore[attr-defined]
-                else:
-                    webbrowser.open(target_url)
+                webbrowser.open(target_url)
                 return self._send_json({"success": True, "opened_url": target_url})
-            except Exception as exc:
+            except (OSError, ValueError, webbrowser.Error) as exc:
                 return self._send_error(str(exc), status=500)
 
         # POST /api/download-update
         if path == "/api/download-update":
             body = self._read_json_body()
-            dl_url = str(body.get("download_url") or f"{GITHUB_REPO_URL}/releases/latest/download/LINE-Vault-win64.exe").strip()
-            if not dl_url.startswith(GITHUB_REPO_URL) and not dl_url.startswith("https://objects.githubusercontent.com/"):
-                return self._send_error("Untrusted download URL", status=400)
+            asset_type = str(body.get("asset_type") or "exe").strip().lower()
+            asset_name = "LINE-Vault-win64.zip" if asset_type == "zip" else "LINE-Vault-win64.exe"
+            dl_url = f"{GITHUB_REPO_URL}/releases/latest/download/{asset_name}"
+
             downloads_dir = Path.home() / "Downloads"
             if not downloads_dir.exists():
                 downloads_dir = self.server_vault_dir
-            filename = Path(urllib.parse.urlparse(dl_url).path).name or "LINE-Vault-win64.exe"
-            if not filename.endswith((".exe", ".zip")):
-                filename = "LINE-Vault-win64.exe"
-            dest_path = downloads_dir / f"LINE-Vault-latest-{filename}"
+            dest_path = downloads_dir / f"LINE-Vault-latest-{asset_name}"
             try:
                 req = urllib.request.Request(
                     dl_url,
@@ -626,7 +680,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                     "saved_path": str(dest_path),
                     "size_bytes": len(data_bytes),
                 })
-            except Exception as exc:
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 return self._send_error(f"下載更新檔案失敗 ({exc})", status=500)
 
         # POST /api/scan-line
@@ -782,6 +836,10 @@ def create_server(
     BoundHandler.static_dir = static_dir
 
     server = ThreadingHTTPServer((host, port), BoundHandler)
+    server.last_heartbeat_time = time.time()
+    server.has_active_client = False
+    server.shutdown_requested = False
+    server.shutdown_pending_time = None
     if enable_auto_updater:
         updater = VaultAutoUpdater(db, archiver, analyzer)
         updater.start()

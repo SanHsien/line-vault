@@ -1200,6 +1200,38 @@ document.addEventListener("DOMContentLoaded", () => {
   let latestDownloadUrl = "";
   let latestReleasePageUrl = "https://github.com/SanHsien/line-vault/releases";
   let repoHomeUrl = "https://github.com/SanHsien/line-vault";
+  const btnVisitGitHub = document.getElementById("btnVisitGitHub");
+
+  async function openSystemBrowser(targetUrl) {
+    const url = targetUrl || repoHomeUrl;
+    try {
+      const res = await fetch("/api/open-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (res.ok) {
+        showToast(currentLang === "en" ? "Opened in system default browser" : "已使用系統預設瀏覽器開啟 GitHub 網頁", "🌐");
+      } else {
+        window.open(url, "_blank");
+      }
+    } catch (e) {
+      window.open(url, "_blank");
+    }
+  }
+
+  if (aboutRepoLink) {
+    aboutRepoLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      openSystemBrowser(repoHomeUrl);
+    });
+  }
+
+  if (btnVisitGitHub) {
+    btnVisitGitHub.addEventListener("click", () => {
+      openSystemBrowser(repoHomeUrl);
+    });
+  }
 
   async function openAboutModal() {
     if (!aboutModal) return;
@@ -2119,7 +2151,6 @@ document.addEventListener("DOMContentLoaded", () => {
       body_zh: `<p>此功能為 LINE Vault 本地安全歸檔與分析的整合元件，所有操作均在您的 Windows 電腦本地進行，無須上傳外部雲端。</p>`,
       body_en: `<p>This feature operates strictly on your local Windows PC for anti-expiration archiving without cloud reliance.</p>`
     };
-    const isEn = (typeof currentLang !== "undefined" && currentLang === "en");
     if (conceptModalTitle) {
       conceptModalTitle.textContent = isEn ? (topic.title_en || topic.title_zh) : topic.title_zh;
     }
@@ -2169,6 +2200,20 @@ document.addEventListener("DOMContentLoaded", () => {
     // Automatically select the first chat if available
     if (chatsCache.length > 0) {
       selectChat(chatsCache[0]);
+    }
+  });
+// Heartbeat & graceful window shutdown
+  function sendHeartbeat() {
+    fetch("/api/heartbeat", { method: "POST" }).catch(() => {});
+  }
+  sendHeartbeat();
+  setInterval(sendHeartbeat, 2500);
+
+  window.addEventListener("pagehide", () => {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/shutdown");
+    } else {
+      fetch("/api/shutdown", { method: "POST", keepalive: true }).catch(() => {});
     }
   });
 });

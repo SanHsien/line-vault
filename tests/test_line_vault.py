@@ -1180,6 +1180,18 @@ def test_frontend_js_syntax_and_dom_ids_integrity():
     assert "flex-wrap: wrap" in styles_css
     assert "not(.app-header)" in styles_css
 
+    # 4. Syntax validation via Node.js check-syntax
+    import shutil
+    import subprocess
+    node_exe = shutil.which("node")
+    if node_exe:
+        res = subprocess.run(
+            [node_exe, "-c", str(repo_root / "line_vault" / "static" / "app.js")],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"app.js syntax validation failed: {res.stderr}"
+
 
 def test_non_ascii_media_and_report_download(tmp_path: Path):
     """Verify downloading Chinese-named media ('正式報價合約_Q4.pdf') and Chinese chat reports succeeds without latin-1 header errors."""
@@ -1378,9 +1390,30 @@ def test_unlimited_txt_messages_and_delete_clear_about_apis(tmp_path: Path):
         # Verify GET /api/about returns app metadata
         with urllib.request.urlopen(f"{base_url}/api/about") as resp:
             about = json.loads(resp.read().decode("utf-8"))
-            assert about["version"] == "1.4.1"
+            assert about["version"] == "1.4.2"
             assert about["author"] == "SanHsien"
             assert "github.com/SanHsien/line-vault" in about["github_repo_url"]
+
+        # Verify POST /api/heartbeat and /api/shutdown
+        req_hb = urllib.request.Request(
+            f"{base_url}/api/heartbeat",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_hb) as resp:
+            assert resp.status == 200
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "alive"
+
+        req_shut = urllib.request.Request(
+            f"{base_url}/api/shutdown",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_shut) as resp:
+            assert resp.status == 200
+            assert json.loads(resp.read().decode("utf-8"))["status"] == "shutdown_pending"
 
         # Verify POST /api/chats/<chat_id>/delete deletes the chat room
         req_del = urllib.request.Request(
