@@ -1080,10 +1080,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnManualSync) {
     btnManualSync.addEventListener("click", async () => {
       btnManualSync.disabled = true;
-      if (globalSyncBanner) globalSyncBanner.style.display = "flex";
+      if (globalSyncBanner) globalSyncBanner.style.setProperty("display", "flex", "important");
 
       const timer = createProgressTimer((timeStr) => {
-        btnManualSync.innerHTML = `<span>⏳</span> ${currentLang === "en" ? "Syncing" : "同步中"} (${timeStr})...`;
+        btnManualSync.innerHTML = `<span><span class="spin-icon">⏳</span></span> ${currentLang === "en" ? "Syncing" : "同步中"} (${timeStr})...`;
         if (globalSyncBannerText) {
           globalSyncBannerText.textContent = currentLang === "en"
             ? `Syncing local LINE database & media... Elapsed ${timeStr} (Application is actively working, please wait)`
@@ -1112,7 +1112,7 @@ document.addEventListener("DOMContentLoaded", () => {
             globalSyncBannerBadge.style.background = "var(--accent-green)";
           }
           setTimeout(() => {
-            if (globalSyncBanner) globalSyncBanner.style.display = "none";
+            if (globalSyncBanner) globalSyncBanner.style.setProperty("display", "none", "important");
             if (globalSyncBannerBadge) {
               globalSyncBannerBadge.textContent = currentLang === "en" ? "In Progress" : "進行中";
               globalSyncBannerBadge.style.background = "var(--accent-blue)";
@@ -1133,12 +1133,12 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         } else {
           timer.stop();
-          if (globalSyncBanner) globalSyncBanner.style.display = "none";
+          if (globalSyncBanner) globalSyncBanner.style.setProperty("display", "none", "important");
           showToast(data.error || "手動同步未完成，請確認本機 LINE 是否已開啟", "⚠️");
         }
       } catch (err) {
         timer.stop();
-        if (globalSyncBanner) globalSyncBanner.style.display = "none";
+        if (globalSyncBanner) globalSyncBanner.style.setProperty("display", "none", "important");
         showToast("同步出錯: " + err.message, "❌");
       } finally {
         btnManualSync.disabled = false;
@@ -2109,9 +2109,17 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   function openConceptHelp(topicKey) {
-    const topic = HELP_TOPICS[topicKey];
-    if (!topic || !conceptHelpModal) return;
-    const isEn = (currentLanguage === "en");
+    if (!conceptHelpModal) return;
+    const isEn = (typeof currentLang !== "undefined" && currentLang === "en");
+    const topic = HELP_TOPICS[topicKey] || {
+      title_zh: "💡 功能說明",
+      title_en: "💡 Feature Information",
+      badge_zh: "系統說明",
+      badge_en: "System Help",
+      body_zh: `<p>此功能為 LINE Vault 本地安全歸檔與分析的整合元件，所有操作均在您的 Windows 電腦本地進行，無須上傳外部雲端。</p>`,
+      body_en: `<p>This feature operates strictly on your local Windows PC for anti-expiration archiving without cloud reliance.</p>`
+    };
+    const isEn = (typeof currentLang !== "undefined" && currentLang === "en");
     if (conceptModalTitle) {
       conceptModalTitle.textContent = isEn ? (topic.title_en || topic.title_zh) : topic.title_zh;
     }
@@ -2125,11 +2133,11 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
       `;
     }
-    conceptHelpModal.style.display = "flex";
+    conceptHelpModal.style.setProperty("display", "flex", "important");
   }
 
   function closeConceptHelp() {
-    if (conceptHelpModal) conceptHelpModal.style.display = "none";
+    if (conceptHelpModal) conceptHelpModal.style.setProperty("display", "none", "important");
   }
 
   if (btnCloseConceptHelp) btnCloseConceptHelp.addEventListener("click", closeConceptHelp);
