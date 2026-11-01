@@ -140,7 +140,7 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
 
         # Standard CodeQL sanitized path pattern: os.path.normpath(os.path.join(base_path, rel_part))
         fullpath = os.path.normpath(os.path.join(base_path, rel_part))
-        if not (fullpath == base_path or fullpath.startswith(base_path + os.sep)):
+        if not fullpath.startswith(base_path):
             return None
 
         if not os.path.isdir(fullpath):
