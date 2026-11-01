@@ -673,8 +673,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const shieldBadge = m.media_status === "archived"
-        ? '<span class="shield-badge-archived">🛡️ 已永久防過期備份</span>'
-        : (m.media_status === "cached_pending" ? '<span class="shield-badge-pending">⏳ 待快取備份</span>' : '');
+        ? '<span class="shield-badge-archived">🛡️ 已永久防過期備份<button type="button" class="btn-help" data-help="archived_media" title="已永久保存說明">?</button></span>'
+        : (m.media_status === "cached_pending" ? '<span class="shield-badge-pending">⏳ 待快取備份<button type="button" class="btn-help" data-help="cached_pending" title="什麼是待快取備份？">?</button></span>' : '');
 
       const isBm = Boolean(m.bookmarked);
       const starIcon = isBm ? "⭐" : "☆";
@@ -1866,7 +1866,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Purge any third-party browser extension DOM nodes appended to body
   function purgeInjectedExtensionNodes() {
-    const allowedIds = new Set(["settingsModal", "helpModal", "aboutModal", "toastContainer"]);
+    const allowedIds = new Set(["settingsModal", "helpModal", "aboutModal", "conceptHelpModal", "toastContainer"]);
     Array.from(document.body.children).forEach((el) => {
       if (el.tagName === "SCRIPT") return;
       if (el.classList.contains("app-header") || el.classList.contains("main-layout")) return;
@@ -1879,6 +1879,278 @@ document.addEventListener("DOMContentLoaded", () => {
     const extObserver = new MutationObserver(() => purgeInjectedExtensionNodes());
     extObserver.observe(document.body, { childList: true });
   }
+
+
+  // ==========================================================================
+  // Concept / Feature Explanation Tooltip Modals (?)
+  // ==========================================================================
+  const conceptHelpModal = document.getElementById("conceptHelpModal");
+  const conceptModalTitle = document.getElementById("conceptModalTitle");
+  const conceptModalBody = document.getElementById("conceptModalBody");
+  const btnCloseConceptHelp = document.getElementById("btnCloseConceptHelp");
+  const btnConfirmConceptHelp = document.getElementById("btnConfirmConceptHelp");
+
+  const HELP_TOPICS = {
+    manual_sync: {
+      title_zh: "🔄 手動同步 LINE 訊息",
+      title_en: "🔄 Manual LINE Sync",
+      badge_zh: "即時雙向比對",
+      badge_en: "Instant Local Scan",
+      body_zh: `
+        <p><b>手動同步會執行以下動作：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>解密本機 SQLite 資料庫</b>：讀取 Windows 桌面版 LINE 的最新聊天紀錄、成員暱稱與訊息。</li>
+          <li><b>自動防過期歸檔</b>：掃描本機快取與暫存，將最新相片、影片、貼圖及檔案解密備份至本地金庫。</li>
+          <li><b>AI 智慧重整</b>：更新統計數據、待辦清單與對話摘要。</li>
+        </ul>
+        <div class="concept-help-tip">💡 建議在重要對話或接收大量檔案後點擊一次，確保所有內容已永久儲存在您的電腦中。</div>
+      `,
+      body_en: `
+        <p><b>Manual Sync performs the following:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>Decrypts Local SQLite DB</b>: Reads latest chats, member names, and messages from Windows LINE client.</li>
+          <li><b>Automatic Anti-Expiration Backup</b>: Scans cache/downloads and archives photos, videos, stickers, and files to your local vault.</li>
+          <li><b>AI Insights</b>: Updates action items, metrics, and conversation summaries.</li>
+        </ul>
+        <div class="concept-help-tip">💡 Tip: Run a manual sync after receiving important photos or files to guarantee permanent local protection.</div>
+      `
+    },
+    cached_pending: {
+      title_zh: "⏳ 什麼是「待快取備份」？如何自動下載原檔？",
+      title_en: "⏳ What is 'Pending Cache Backup'? How to get original files?",
+      badge_zh: "縮圖已安全保存・原檔需快取",
+      badge_en: "Thumbnail Saved・Original Awaiting Cache",
+      body_zh: `
+        <p><b>LINE 官方的原圖傳輸與快取機制：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>縮圖已永久保存</b>：LINE 伺服器會自動先傳送預覽縮圖，<b>本系統已第一時間將該縮圖永久歸檔</b>至您的硬碟，即便超過 14~30 天官方過期，畫面也不會消失。</li>
+          <li><b>原檔為什麼還在等待？</b>LINE 桌面版預設<b>不會主動自動將所有完整高畫質原檔載入硬碟</b>，只有在使用者於 LINE 聊天室中<b>「點擊照片放大」或「點下載」</b>時，LINE 才會向伺服器拉取完整原檔。</li>
+          <li><b>如何自動升級成完整高畫質原檔？</b>只要您在 LINE 視窗中點開過那張照片或檔案，本程式在下一次同步時就會<b>全自動抓取該高畫質原檔並永久歸檔</b>，圖示將自動升級為「🛡️ 已永久保存」！</li>
+        </ul>
+        <div class="concept-help-tip">💡 批次密技：在 LINE 聊天室右上角開啟「相簿」或「照片／影片清單」，滑過或點擊載入，LINE Vault 就會全數自動接手永久歸檔！</div>
+      `,
+      body_en: `
+        <p><b>How LINE Media Delivery & Caching Works:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>Thumbnail is Permanently Saved</b>: LINE automatically sends thumbnails first. <b>LINE Vault has already permanently archived this thumbnail</b> to your disk so it will never expire or turn grey.</li>
+          <li><b>Why is the original pending?</b> The desktop LINE app does not auto-download high-resolution original files until you <b>click to enlarge or download</b> in the chat.</li>
+          <li><b>How to get original files?</b> Simply view/enlarge the photo in LINE once. Next time LINE Vault syncs, it will <b>automatically grab the original file</b> and promote the status to '🛡️ Permanently Archived'!</li>
+        </ul>
+        <div class="concept-help-tip">💡 Pro Tip: Open 'Photos / Videos' in the LINE chat sidebar and scroll through; LINE Vault will automatically archive all original files!</div>
+      `
+    },
+    archived_media: {
+      title_zh: "🛡️ 什麼是「已永久保存」？",
+      title_en: "🛡️ What is 'Permanently Archived'?",
+      badge_zh: "100% 永久防過期",
+      badge_en: "100% Anti-Expiration Safe",
+      body_zh: `
+        <p><b>此媒體檔案已安全落地儲存：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>該照片、影片或檔案已經過解密並完整複製到您的本機資料夾（按聊天室名稱分類）。</li>
+          <li><b>即使 LINE 伺服器超過 30 天刪除檔案</b>，或者發送者事後收回/刪除帳號，您電腦硬碟中的檔案依然完整保留。</li>
+          <li>隨時可以在「相片牆」、「影片庫」或本地資料夾直接開啟與離線使用。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>This media file is permanently secured:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>The media has been decrypted and stored locally inside your vault directory, sorted by chat name.</li>
+          <li><b>Even if LINE servers delete the file after 14-30 days</b>, your local copy remains fully intact and accessible offline.</li>
+        </ul>
+      `
+    },
+    auto_download_media: {
+      title_zh: "⚙️ 自動下載原檔與媒體機制說明",
+      title_en: "⚙️ Automatic Media & Original Download Policy",
+      badge_zh: "全自動偵測與歸檔",
+      badge_en: "Automated Detection & Storage",
+      body_zh: `
+        <p><b>各類型媒體的自動下載策略：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>貼圖 (Stickers)</b>：勾選後由系統直接向官方 CDN 下載原解析度 PNG 透明圖檔，<b>100% 全自動下載</b>。</li>
+          <li><b>相片與影片</b>：若本機存有原檔（下載過或本機發送），系統<b>優先自動歸檔完整原檔</b>；若僅有縮圖快取，則自動歸檔縮圖並列為待快取備份。</li>
+          <li><b>社群 (OpenChat)</b>：已全面支援自動歸檔社群之所有相片快取與原圖，不受限於加密金鑰。</li>
+          <li><b>檔案 (Files)</b>：若您在 LINE 曾另存或開啟過該檔案，系統將自動納入本地金庫備份。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Auto-download strategies for each media type:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>Stickers</b>: 100% automatically downloaded in full resolution from official CDNs.</li>
+          <li><b>Photos & Videos</b>: Automatically archives original files if downloaded/cached, otherwise archives thumbnails as safe backup.</li>
+          <li><b>OpenChat Communities</b>: Full support for archiving OpenChat media and thumbnails without requiring E2EE keys.</li>
+          <li><b>Files</b>: Automatically archives files accessed or saved in LINE.</li>
+        </ul>
+      `
+    },
+    media_dir: {
+      title_zh: "📂 媒體與貼圖存放根目錄",
+      title_en: "📂 Media & Sticker Storage Directory",
+      badge_zh: "聊天室名稱自動子目錄",
+      badge_en: "Auto-Organized by Chat Name",
+      body_zh: `
+        <p><b>存放路徑與分類原則：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>預設路徑</b>：程式所在資料夾下的 <code>line-vault/media</code>。</li>
+          <li><b>自動分類</b>：系統會自動抓取真實聊天室名稱（如「里歐酷玩幫」、「家族群」），為每一個聊天室建立獨立的子資料夾。</li>
+          <li><b>自訂位置</b>：您可以點擊「選擇資料夾」指定儲存於外接硬碟、OneDrive 或 NAS 路徑。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Storage Organization Rules:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li><b>Default Location</b>: <code>line-vault/media</code> inside the application directory.</li>
+          <li><b>Auto-Categorization</b>: Automatically creates subfolders named after each chat (e.g. 'Family Group', 'Leo Deals').</li>
+          <li><b>Customization</b>: You can choose an external drive, OneDrive, or NAS path at any time.</li>
+        </ul>
+      `
+    },
+    sync_engine: {
+      title_zh: "🔐 內建 SQLite 引擎同步",
+      title_en: "🔐 Built-in SQLite Decryption Engine",
+      badge_zh: "高精度對話關聯",
+      badge_en: "High-Precision Association",
+      body_zh: `
+        <p><b>純 Python 內建讀取引擎：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>直接以唯讀方式解密 Windows LINE 的 <code>.edb</code> 與 <code>.edb-wal</code> 資料庫。</li>
+          <li>能將每一張相片、影片、貼圖與發言者身分、傳送時間、聊天室對話精確關聯，是完整備份的最佳方式。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Pure Python Built-in Engine:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>Decrypts Windows LINE <code>.edb</code> and WAL databases in memory without external dependencies.</li>
+          <li>Precisely associates every photo, video, and sticker with its sender, timestamp, and message context.</li>
+        </ul>
+      `
+    },
+    cache_scan: {
+      title_zh: "🔄 掃描本機 LINE 快取資料夾",
+      title_en: "🔄 Scan Local LINE Cache Directory",
+      badge_zh: "快取檔案全盤打撈",
+      badge_en: "Deep Cache Recovery",
+      body_zh: `
+        <p><b>快取目錄深度掃描：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>直接掃描 <code>%LOCALAPPDATA%\LINE\Cache</code> 目錄下的所有檔案。</li>
+          <li>自動執行單字節 XOR 反混淆解碼，能打撈出即使資料庫已清理、但快取仍殘留的圖片與音訊。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Deep Directory Cache Scanning:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>Scans all files under <code>%LOCALAPPDATA%\LINE\Cache</code>.</li>
+          <li>Applies single-byte XOR deobfuscation to recover orphan images and audio left in the cache.</li>
+        </ul>
+      `
+    },
+    import_txt: {
+      title_zh: "📄 匯入 LINE 文字對話紀錄 (.txt)",
+      title_en: "📄 Import LINE Chat Text Export (.txt)",
+      badge_zh: "跨裝置匯入分析",
+      badge_en: "Cross-Device Import & Analysis",
+      body_zh: `
+        <p><b>支援官方聊天紀錄匯出檔：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>從 LINE 手機版或電腦版聊天室設定中點選「傳送聊天記錄」，即可取得 <code>.txt</code> 檔案。</li>
+          <li>支援全時間無上限訊息解析，自動識別日期、時間、發言人、通話紀錄與附件提示，並生成 AI 智慧摘要。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Official LINE Text Export Support:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>Export chat history directly from LINE app settings ('Export chat history') to get a <code>.txt</code> file.</li>
+          <li>Parses all-time messages without limit, resolving timestamps, senders, and calls with AI summaries.</li>
+        </ul>
+      `
+    },
+    auto_update: {
+      title_zh: "⏱️ 背景自動更新排程",
+      title_en: "⏱️ Background Auto-Update Schedule",
+      badge_zh: "無感守護",
+      badge_en: "Silent Protection",
+      body_zh: `
+        <p><b>定時背景同步與防過期保護：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>系統會在背景依照您設定的分鐘數間隔（預設 5 分鐘）自動檢查本機 LINE 最新動態。</li>
+          <li>新收到的訊息、貼圖與新快取的相片將自動納入金庫，無需手動頻繁點擊同步。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Periodic Background Synchronization:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>Automatically checks for new LINE messages and media in the background at your set interval (default 5 mins).</li>
+          <li>Newly received messages, stickers, and cached photos are automatically secured without manual effort.</li>
+        </ul>
+      `
+    },
+    date_filter: {
+      title_zh: "📅 時間區間篩選說明",
+      title_en: "📅 Date Range Filter Explanation",
+      badge_zh: "顯示視圖 Filter",
+      badge_en: "Display View Filter Only",
+      body_zh: `
+        <p><b>全量分析與局部顯示：</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>此處設定的時間區間<b>僅為中央清單的「顯示 Filter」</b>，讓您專注檢視特定日期的紀錄。</li>
+          <li>系統底層的資料庫同步、防過期媒體下載與 AI 分析，均為<b>全時間範圍完整處理，絕不設上限</b>。</li>
+        </ul>
+      `,
+      body_en: `
+        <p><b>Full-History Processing vs View Filtering:</b></p>
+        <ul style="padding-left:18px;margin:6px 0;">
+          <li>The date range here acts purely as a <b>display filter</b> for the view.</li>
+          <li>Database synchronization, media archiving, and AI analysis always process <b>all-time history without limits</b>.</li>
+        </ul>
+      `
+    }
+  };
+
+  function openConceptHelp(topicKey) {
+    const topic = HELP_TOPICS[topicKey];
+    if (!topic || !conceptHelpModal) return;
+    const isEn = (currentLanguage === "en");
+    if (conceptModalTitle) {
+      conceptModalTitle.textContent = isEn ? (topic.title_en || topic.title_zh) : topic.title_zh;
+    }
+    if (conceptModalBody) {
+      const badgeText = isEn ? (topic.badge_en || topic.badge_zh) : topic.badge_zh;
+      const htmlBody = isEn ? (topic.body_en || topic.body_zh) : topic.body_zh;
+      conceptModalBody.innerHTML = `
+        <div class="concept-help-section">
+          <div class="concept-help-badge">📌 ${escapeHtml(badgeText)}</div>
+          ${htmlBody}
+        </div>
+      `;
+    }
+    conceptHelpModal.style.display = "flex";
+  }
+
+  function closeConceptHelp() {
+    if (conceptHelpModal) conceptHelpModal.style.display = "none";
+  }
+
+  if (btnCloseConceptHelp) btnCloseConceptHelp.addEventListener("click", closeConceptHelp);
+  if (btnConfirmConceptHelp) btnConfirmConceptHelp.addEventListener("click", closeConceptHelp);
+  if (conceptHelpModal) {
+    conceptHelpModal.addEventListener("click", (e) => {
+      if (e.target === conceptHelpModal) closeConceptHelp();
+    });
+  }
+
+  // Delegate all clicks on .btn-help elements across document
+  document.addEventListener("click", (e) => {
+    const helpBtn = e.target.closest(".btn-help");
+    if (!helpBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const topic = helpBtn.getAttribute("data-help");
+    if (topic) {
+      openConceptHelp(topic);
+    }
+  });
 
   // Initial Load
   updateLanguageUI();

@@ -126,8 +126,8 @@ class MediaArchiver:
         chat_id: str,
         message_id: str,
         cache_root: Path | str,
-        material_b64: str,
-        declared_bytes: int,
+        material_b64: str | None = None,
+        declared_bytes: int = 0,
         fallback_filename: str | None = None,
         thumb_path: Path | str | None = None,
     ) -> dict:
@@ -139,9 +139,9 @@ class MediaArchiver:
         chat_hash = hashlib.sha1(chat_id.encode("utf-8")).hexdigest()
         expected_size = declared_bytes + 32
 
-        # Candidate paths to inspect (only when declared_bytes > 0)
+        # Candidate paths to inspect (only when declared_bytes > 0 and material_b64)
         candidate_paths: list[Path] = []
-        if declared_bytes > 0:
+        if declared_bytes > 0 and material_b64:
             # 1. Standard LINE 26.x cache pattern: <account_bucket>/<chat_hash>/m/
             for match in root.glob(f"*/{chat_hash}/m/*"):
                 if match.is_file() and match.stat().st_size == expected_size:
@@ -183,13 +183,19 @@ class MediaArchiver:
                 try:
                     with open(t_path, "rb") as tf:
                         t_data = tf.read()
-                    # Check if thumb is encrypted or plaintext
+                    # Check if thumb is encrypted, single-byte XOR obfuscated, or plaintext
                     try:
-                        thumb_decrypted = decrypt_e2ee_media(t_data, material_b64)
+                        thumb_decrypted = decrypt_e2ee_media(t_data, material_b64) if material_b64 else t_data
                     except ValueError:
                         thumb_decrypted = t_data
 
                     info = sniff_media_format(thumb_decrypted, fallback_filename or "thumb.jpg")
+                    if info["format"] == "bin":
+                        deobf = try_deobfuscate_xor_media(thumb_decrypted)
+                        deobf_info = sniff_media_format(deobf, fallback_filename or "thumb.jpg")
+                        if deobf_info["format"] != "bin":
+                            thumb_decrypted = deobf
+                            info = deobf_info
                     folder_name = self._get_chat_folder_name(chat_id)
                     safe_msg = _sanitize_path_part(message_id)
                     storage_root = self._get_storage_root()
@@ -247,6 +253,163 @@ class MediaArchiver:
                     }
 
         return {"status": "not_found", "message_id": message_id}
+
+    def archive_local_file(
+        self,
+        chat_id: str,
+        message_id: str,
+        source_file: Path | str,
+        fallback_filename: str | None = None,
+        source_role: str = "original",
+    ) -> dict:
+        """Directly archive a local disk file (e.g. from downloadedPath or originalPath) as original media."""
+        src_path = Path(source_file).resolve()
+        if not src_path.is_file():
+            return {"status": "file_not_found", "message_id": message_id}
+
+        try:
+            file_bytes = src_path.read_bytes()
+        except OSError as exc:
+            return {"status": "read_error", "message_id": message_id, "error": str(exc)}
+
+        info = sniff_media_format(file_bytes, fallback_filename or src_path.name)
+        folder_name = self._get_chat_folder_name(chat_id)
+        safe_msg = _sanitize_path_part(message_id)
+        storage_root = self._get_storage_root()
+        chat_folder = storage_root / folder_name
+        chat_folder.mkdir(parents=True, exist_ok=True)
+
+        eff_filename = fallback_filename or src_path.name
+        dest_file = chat_folder / f"{safe_msg}_{info['sha256'][:8]}{info['ext']}"
+        with open(dest_file, "wb") as f:
+            f.write(file_bytes)
+
+        try:
+            rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+        except ValueError:
+            rel_path = str(dest_file.resolve())
+
+        media_id = f"m_{safe_msg}_{info['sha256'][:8]}"
+        if not self.db.get_chat(chat_id):
+            self.db.upsert_chat(chat_id=chat_id, chat_name=chat_id)
+
+        self.db.upsert_message(
+            message_id=message_id,
+            chat_id=chat_id,
+            media_status="archived",
+            file_name=eff_filename,
+        )
+        record = self.db.register_media(
+            media_id=media_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            media_type=info["media_type"],
+            file_name=eff_filename,
+            mime_type=info["mime_type"],
+            format_name=info["format"],
+            size_bytes=info["size_bytes"],
+            sha256=info["sha256"],
+            vault_rel_path=rel_path,
+            source_role=source_role,
+        )
+        self.db.upsert_message(
+            message_id=message_id,
+            chat_id=chat_id,
+            media_status="archived",
+            file_name=eff_filename,
+        )
+        return {"status": "archived", "media": record, "source_role": source_role}
+
+    def auto_link_cached_media_to_chats(self, cache_root: Path | str) -> int:
+        """Scan cache directory, correlate subfolders matching sha1(chat_id), and auto-archive media into chat folders without manual user clicks."""
+        root = Path(cache_root).resolve()
+        if not root.exists():
+            return 0
+
+        chats = self.db.list_chats()
+        if not chats:
+            return 0
+
+        hash_map: dict[str, dict] = {}
+        for c in chats:
+            cid = c["chat_id"]
+            h = hashlib.sha1(cid.encode("utf-8")).hexdigest()
+            hash_map[h] = c
+
+        total_linked = 0
+        storage_root = self._get_storage_root()
+
+        for chash, chat_info in hash_map.items():
+            cid = chat_info["chat_id"]
+            cname = chat_info.get("chat_name") or cid
+            folder_name = self._get_chat_folder_name(cid, cname)
+            chat_folder = storage_root / folder_name
+
+            # Look for Cache/*/<chash>/**/*
+            candidate_files: list[Path] = []
+            for m_dir in root.glob(f"*/{chash}/**"):
+                if m_dir.is_dir():
+                    try:
+                        for f in m_dir.iterdir():
+                            if f.is_file() and f.stat().st_size > 128:
+                                candidate_files.append(f)
+                    except OSError:
+                        continue
+
+            for f in candidate_files:
+                try:
+                    raw = f.read_bytes()
+                    info = sniff_media_format(raw, fallback_filename=f.name)
+                    if info["format"] == "bin":
+                        deobf = try_deobfuscate_xor_media(raw)
+                        deobf_info = sniff_media_format(deobf, fallback_filename=f.name)
+                        if deobf_info["format"] != "bin":
+                            raw = deobf
+                            info = deobf_info
+
+                    if info["format"] in ("bin", "unknown"):
+                        continue
+
+                    chat_folder.mkdir(parents=True, exist_ok=True)
+                    dest_file = chat_folder / f"cache_{info['sha256'][:10]}{info['ext']}"
+                    if not dest_file.exists():
+                        with open(dest_file, "wb") as out:
+                            out.write(raw)
+
+                    try:
+                        rel_path = dest_file.relative_to(self.vault_dir).as_posix()
+                    except ValueError:
+                        rel_path = str(dest_file.resolve())
+
+                    media_id = f"m_cache_{info['sha256'][:12]}"
+                    if not self.db.get_media(media_id):
+                        dummy_msg_id = f"msg_{cid[-6:]}_{info['sha256'][:8]}"
+                        self.db.upsert_message(
+                            message_id=dummy_msg_id,
+                            chat_id=cid,
+                            content_type=info["media_type"],
+                            text_content=f"[{info['media_type'].upper()}] {dest_file.name}",
+                            media_status="archived",
+                            file_name=dest_file.name,
+                        )
+                        self.db.register_media(
+                            media_id=media_id,
+                            message_id=dummy_msg_id,
+                            chat_id=cid,
+                            media_type=info["media_type"],
+                            file_name=dest_file.name,
+                            mime_type=info["mime_type"],
+                            format_name=info["format"],
+                            size_bytes=info["size_bytes"],
+                            sha256=info["sha256"],
+                            vault_rel_path=rel_path,
+                            source_role="cache_recovery",
+                        )
+                        total_linked += 1
+                except (OSError, ValueError, sqlite3.Error):
+                    continue
+
+        return total_linked
 
     def scan_local_line_directory(self, line_data_dir: Path | str, analyzer=None) -> dict:
         """Scan a local LINE Data/Cache directory and import/archive discovered media assets."""

@@ -1378,7 +1378,7 @@ def test_unlimited_txt_messages_and_delete_clear_about_apis(tmp_path: Path):
         # Verify GET /api/about returns app metadata
         with urllib.request.urlopen(f"{base_url}/api/about") as resp:
             about = json.loads(resp.read().decode("utf-8"))
-            assert about["version"] == "1.3.0"
+            assert about["version"] == "1.4.0"
             assert about["author"] == "SanHsien"
             assert "github.com/SanHsien/line-vault" in about["github_repo_url"]
 
@@ -1787,3 +1787,61 @@ def test_community_square_name_resolution_and_folder_migration(tmp_path: Path):
 
     db.close()
     conn.close()
+
+
+def test_archive_local_file_and_autolink_cached_media(tmp_path: Path):
+    """Verify archive_local_file archives original files directly and auto_link_cached_media_to_chats recovers cache."""
+    import hashlib
+
+    from line_vault.archiver import MediaArchiver
+    from line_vault.db import VaultDB
+
+    vault_dir = tmp_path / "v_autolink"
+    db = VaultDB(vault_dir / "vault.db")
+    archiver = MediaArchiver(vault_dir, db)
+
+    chat_id = "c_autolink_chat"
+    db.upsert_chat(chat_id=chat_id, chat_name="自動歸檔群")
+
+    # 1. Test archive_local_file
+    sample_file = tmp_path / "original_photo.jpg"
+    # Write a simple valid JPEG header
+    sample_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00" + b"A" * 100)
+    res = archiver.archive_local_file(
+        chat_id=chat_id,
+        message_id="msg_orig_01",
+        source_file=sample_file,
+        fallback_filename="original_photo.jpg",
+    )
+    assert res["status"] == "archived"
+    assert res["source_role"] == "original"
+    msgs = db.search_messages(chat_id=chat_id)
+    assert msgs[0]["media_status"] == "archived"
+
+    # 2. Test auto_link_cached_media_to_chats
+    cache_root = tmp_path / "FakeCache"
+    chat_hash = hashlib.sha1(chat_id.encode("utf-8")).hexdigest()
+    m_cache_dir = cache_root / "acc_1" / chat_hash / "m" / "sub"
+    m_cache_dir.mkdir(parents=True, exist_ok=True)
+    orphan_cache_file = m_cache_dir / "cached_img.eimg"
+    orphan_cache_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00" + b"B" * 200)
+
+    recovered = archiver.auto_link_cached_media_to_chats(cache_root)
+    assert recovered == 1
+    media_list = db.list_media(chat_id=chat_id)
+    assert len(media_list) >= 2
+
+
+def test_help_buttons_and_concept_modal():
+    """Verify presence of .btn-help elements and conceptHelpModal in frontend assets."""
+    repo_root = Path(__file__).resolve().parent.parent
+    index_html = (repo_root / "line_vault" / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (repo_root / "line_vault" / "static" / "app.js").read_text(encoding="utf-8")
+    styles_css = (repo_root / "line_vault" / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="conceptHelpModal"' in index_html
+    assert 'class="btn-help"' in index_html
+    assert '.btn-help' in styles_css
+    assert 'HELP_TOPICS' in app_js
+    assert 'openConceptHelp' in app_js
+    assert 'cached_pending' in app_js

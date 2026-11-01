@@ -14,7 +14,7 @@
         <span class="logo-icon">🛡️</span>
       </div>
       <div class="title-box">
-        <h1>LINE Vault <span class="badge-beta">v1.3.0</span></h1>
+        <h1>LINE Vault <span class="badge-beta">v1.4.0</span></h1>
         <p class="subtitle" id="i18nSubtitle">Windows 11 本地對話與防過期媒體管理中心</p>
       </div>
     </div>
@@ -58,9 +58,12 @@
         <button id="btnOpenSettings" class="btn btn-secondary" title="開啟金庫與同步設定視窗">
           <span class="btn-icon">⚙️</span> <span id="txtBtnSettings">金庫與同步設定</span>
         </button>
-        <button id="btnManualSync" class="btn btn-primary" title="手動同步本機 LINE 最新對話紀錄、貼圖與防過期媒體">
-          <span class="btn-icon">🔄</span> <span id="txtBtnManualSync">同步 LINE 訊息</span>
-        </button>
+        <div style="display:inline-flex;align-items:center;">
+          <button id="btnManualSync" class="btn btn-primary" title="手動同步本機 LINE 最新對話紀錄、貼圖與防過期媒體">
+            <span class="btn-icon">🔄</span> <span id="txtBtnManualSync">同步 LINE 訊息</span>
+          </button>
+          <button type="button" class="btn-help" data-help="manual_sync" title="查看手動同步說明">?</button>
+        </div>
         <button id="btnAnalyzeAll" class="btn btn-primary" title="重新分析所有已監控聊天室">
           <span class="btn-icon">⚡</span> <span id="txtBtnAnalyzeAll">重新分析全部</span>
         </button>
@@ -164,7 +167,7 @@
           <button id="btnApplyDateFilter" class="btn btn-sm btn-outline">篩選</button>
           <button id="btnResetFilter" class="btn btn-sm btn-ghost">重設</button>
         </div>
-        <div class="filter-status-text" id="filterStatusText">顯示中全部訊息（僅作為畫面顯示 Filter，不影響全時間範圍同步與 AI 分析）</div>
+        <div class="filter-status-text" id="filterStatusText">顯示中全部訊息（僅作為畫面顯示 Filter，不影響全時間範圍同步與 AI 分析）<button type="button" class="btn-help" data-help="date_filter" title="查看時間篩選說明">?</button></div>
       </div>
 
       <!-- Center Dynamic Content Container -->
@@ -241,7 +244,7 @@
         </div>
 
         <div class="settings-form-group">
-          <label>📂 媒體與貼圖存放根目錄（系統將依聊天室名稱自動建立子資料夾存放）：</label>
+          <label>📂 媒體與貼圖存放根目錄（系統將依聊天室名稱自動建立子資料夾存放）：<button type="button" class="btn-help" data-help="media_dir" title="查看存放目錄說明">?</button></label>
           <div class="settings-form-row">
             <input type="text" id="inputMediaStorageDir" placeholder="預設：line-vault/media" style="flex: 1;" />
             <button id="btnPickMediaDir" class="btn btn-outline" style="width: auto; white-space: nowrap;">
@@ -251,7 +254,7 @@
         </div>
 
         <div class="settings-form-group">
-          <label>自動下載媒體與貼圖類型勾選：</label>
+          <label>自動下載媒體與貼圖類型勾選：<button type="button" class="btn-help" data-help="auto_download_media" title="查看自動下載原檔機制說明">?</button></label>
           <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
               <input type="checkbox" id="chkAutoStickers" checked /> 貼圖
@@ -275,10 +278,10 @@
 
         <div class="settings-actions-group">
           <button id="btnModalSyncMcp" class="btn btn-primary">
-            <span>🔐 同步 LINE 資料庫與快取 (內建引擎)</span>
+            <span>🔐 同步 LINE 資料庫與快取 (內建引擎)</span> <button type="button" class="btn-help" data-help="sync_engine" title="查看內建引擎說明" style="background:rgba(255,255,255,0.2);color:#fff;border-color:rgba(255,255,255,0.4);">?</button>
           </button>
           <button id="btnModalScanLine" class="btn btn-secondary">
-            <span>🔄 掃描本機 LINE 快取資料夾</span>
+            <span>🔄 掃描本機 LINE 快取資料夾</span> <button type="button" class="btn-help" data-help="cache_scan" title="查看快取掃描說明">?</button>
           </button>
         </div>
         <div id="syncModalTimerNotice" class="sync-timer-notice" style="display:none;margin-top:8px;padding:8px 12px;border-radius:6px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);font-size:12px;color:var(--text-main);line-height:1.5;">
@@ -291,7 +294,7 @@
         <!-- GUI Chat History Import -->
         <div class="settings-import-section">
           <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:6px;" id="txtImportSectionTitle">
-            📄 匯入 LINE 文字對話紀錄 (.txt)：
+            📄 匯入 LINE 文字對話紀錄 (.txt)：<button type="button" class="btn-help" data-help="import_txt" title="查看文字紀錄匯入說明">?</button>
           </label>
           <div class="settings-form-row">
             <div class="settings-form-group" style="flex: 2;">
@@ -321,7 +324,7 @@
             <label class="toggle-switch-label" style="flex: 1;">
               <input type="checkbox" id="toggleAutoUpdate" checked>
               <span class="toggle-slider"></span>
-              <span class="toggle-text">⏱️ 背景自動更新排程（全時間範圍同步與自動下載）</span>
+              <span class="toggle-text">⏱️ 背景自動更新排程（全時間範圍同步與自動下載）<button type="button" class="btn-help" data-help="auto_update" title="查看自動更新說明">?</button></span>
             </label>
             <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
               <label for="inputAutoUpdateInterval" style="font-size:12px;color:var(--text-muted);">更新頻率：</label>
@@ -445,5 +448,22 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <script src="/app.js"></script>
+
+  <!-- Concept / Feature Explanation Modal -->
+  <div id="conceptHelpModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card concept-modal-card">
+      <div class="modal-header">
+        <h3 id="conceptModalTitle">💡 功能說明</h3>
+        <button id="btnCloseConceptHelp" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body" id="conceptModalBody">
+        <!-- 動態注入說明內容 -->
+      </div>
+      <div class="modal-footer" style="padding:12px 20px;background:var(--bg-card);border-top:1px solid var(--border-color);display:flex;justify-content:flex-end;">
+        <button id="btnConfirmConceptHelp" class="btn btn-primary" style="padding:6px 18px;">我知道了</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

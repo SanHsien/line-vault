@@ -821,6 +821,7 @@ class BuiltinLineReader:
             messages_batch: list[dict] = []
             pending_stickers: list[tuple] = []
             pending_cache: list[tuple] = []
+            pending_local_files: list[tuple] = []
 
             for mid, sender_mid, created_ms, text_val, ctype_int, meta_raw, info_raw in reversed(msg_rows):
                 msg_id = f"line_{c_id[-8:]}_{mid}"
@@ -850,11 +851,25 @@ class BuiltinLineReader:
                 file_name = str(info_obj.get("fileName") or meta_obj.get("FILE_NAME") or "").strip()
                 key_material = info_obj.get("keyMaterial")
                 thumb_path = info_obj.get("thumbPath")
+                downloaded_path = info_obj.get("downloadedPath")
+                local_path = info_obj.get("path") or info_obj.get("originalPath")
                 declared_bytes = 0
                 try:
                     declared_bytes = int(meta_obj.get("FILE_SIZE") or 0)
                 except (ValueError, TypeError):
                     declared_bytes = 0
+
+                # Also inspect nested MEDIA_CONTENT_INFO for true original file size
+                if declared_bytes == 0 and "MEDIA_CONTENT_INFO" in meta_obj:
+                    mci_raw = meta_obj["MEDIA_CONTENT_INFO"]
+                    if isinstance(mci_raw, str) and mci_raw.startswith("{"):
+                        try:
+                            mci = json.loads(mci_raw)
+                            declared_bytes = int(mci.get("fileSize") or 0)
+                            if not file_name and mci.get("extension"):
+                                file_name = f"image_{mid}.{mci['extension']}"
+                        except (ValueError, TypeError):
+                            pass
 
                 can_download = True
                 if kind == 1:
@@ -904,7 +919,22 @@ class BuiltinLineReader:
                 if not body_text and c_type_str == "text":
                     continue
 
-                initial_status = "pending" if (can_download and key_material and (declared_bytes or thumb_path)) else "none"
+                has_local_file = bool(
+                    (downloaded_path and Path(downloaded_path).is_file())
+                    or (local_path and Path(local_path).is_file())
+                )
+                has_cache_candidate = bool(
+                    key_material
+                    or (thumb_path and Path(thumb_path).is_file())
+                    or declared_bytes > 0
+                )
+
+                if has_local_file and can_download:
+                    initial_status = "pending"
+                elif has_cache_candidate and can_download:
+                    initial_status = "pending"
+                else:
+                    initial_status = "none"
 
                 messages_batch.append({
                     "message_id": msg_id,
@@ -918,13 +948,31 @@ class BuiltinLineReader:
                     "file_name": file_name,
                 })
 
-                if can_download and key_material and (declared_bytes or thumb_path):
-                    pending_cache.append((c_id, msg_id, key_material, declared_bytes, file_name, thumb_path))
+                if can_download and has_local_file:
+                    eff_src = downloaded_path if (downloaded_path and Path(downloaded_path).is_file()) else local_path
+                    pending_local_files.append((c_id, msg_id, eff_src, file_name))
+                elif can_download and has_cache_candidate:
+                    pending_cache.append((c_id, msg_id, key_material or "", declared_bytes, file_name, thumb_path))
 
             # 1. First insert all messages into SQLite to satisfy FOREIGN KEY constraint
             if messages_batch:
                 archiver.db.upsert_messages_batch(messages_batch)
                 messages_synced += len(messages_batch)
+
+            # 1b. Directly archive discovered local original files (downloadedPath or originalPath)
+            for l_cid, l_mid, l_src, l_fn in pending_local_files:
+                try:
+                    loc_res = archiver.archive_local_file(
+                        chat_id=l_cid,
+                        message_id=l_mid,
+                        source_file=l_src,
+                        fallback_filename=l_fn,
+                        source_role="original",
+                    )
+                    if loc_res.get("status") == "archived":
+                        media_archived += 1
+                except (OSError, ValueError, sqlite3.Error):
+                    continue
 
             # 2. Safely download and archive stickers (foreign key is now guaranteed to exist)
             for s_cid, s_mid, s_id, s_pkg, s_ver, s_cname in pending_stickers:
@@ -961,6 +1009,13 @@ class BuiltinLineReader:
 
             if days > 0 and chats_synced >= 35 and not (chat_name_filter and chat_name_filter.strip()):
                 break
+
+        # 4. Automatically correlate and recover all orphan media from LINE Cache into chat folders without manual clicks
+        try:
+            recovered_count = archiver.auto_link_cached_media_to_chats(cache_root)
+            media_archived += recovered_count
+        except (OSError, ValueError, sqlite3.Error):
+            pass
 
         return chats_synced, messages_synced, media_archived
 
