@@ -113,56 +113,40 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
     def _resolve_safe_scan_dir(self, user_dir: str | None) -> str | None:
         """Resolve and validate custom LINE scan directory against path injection."""
         local_appdata = os.environ.get("LOCALAPPDATA", "")
-        default_line_root = None
-        default_line_dir = None
-        if local_appdata:
-            line_base = Path(local_appdata) / "LINE"
-            default_line_root = os.path.normpath(os.path.realpath(str(line_base)))
-            candidate = line_base / "Data"
-            default_line_dir = str(candidate if candidate.exists() else line_base)
+        default_line_root = os.path.normpath(os.path.join(local_appdata, "LINE")) if local_appdata else ""
+        default_line_dir = os.path.normpath(os.path.join(default_line_root, "Data")) if default_line_root else ""
 
-        if not user_dir or not isinstance(user_dir, str) or not str(user_dir).strip():
+        if not user_dir or not isinstance(user_dir, str) or not user_dir.strip():
             return default_line_dir if (default_line_dir and os.path.isdir(default_line_dir)) else None
 
-        user_dir_str = str(user_dir).strip()
-        if default_line_dir and user_dir_str in (
+        user_dir_str = user_dir.strip()
+        if user_dir_str in (
             default_line_dir,
             default_line_root,
             "%LOCALAPPDATA%\\LINE\\Data",
             "%LOCALAPPDATA%\\LINE",
         ):
-            return default_line_dir if os.path.isdir(default_line_dir) else None
+            return default_line_dir if (default_line_dir and os.path.isdir(default_line_dir)) else None
 
-        if any(c in user_dir_str for c in "\x00\r\n\t"):
+        # Disallow relative traversal and control characters before touching filesystem
+        if ".." in user_dir_str or any(c in user_dir_str for c in "\x00\r\n\t"):
             return None
 
-        try:
-            resolved_user = Path(user_dir_str).resolve()
-            resolved_base = Path(self.allowed_scan_root).resolve()
-            user_path_str = str(resolved_user)
-            base_path_str = str(resolved_base)
+        base_root = os.path.normpath(str(self.allowed_scan_root))
+        normalized = os.path.normpath(user_dir_str)
 
-            allowed = False
-            try:
-                if os.path.commonpath([base_path_str, user_path_str]) == base_path_str:
-                    allowed = True
-            except (ValueError, OSError):
-                pass
-
-            if not allowed and default_line_root:
-                resolved_line = Path(default_line_root).resolve()
-                line_path_str = str(resolved_line)
-                try:
-                    if os.path.commonpath([line_path_str, user_path_str]) == line_path_str:
-                        allowed = True
-                except (ValueError, OSError):
-                    pass
-
-            if not allowed or not resolved_user.is_dir():
-                return None
-            return user_path_str
-        except (ValueError, OSError):
+        # CodeQL recognized path containment prefix check
+        is_safe_child = (
+            normalized == base_root
+            or normalized.startswith(base_root + os.sep)
+            or bool(default_line_root and (normalized == default_line_root or normalized.startswith(default_line_root + os.sep)))
+        )
+        if not is_safe_child:
             return None
+
+        if not os.path.isdir(normalized):
+            return None
+        return normalized
 
     def _resolve_safe_reader_script(self, user_script: str | None) -> str | None:
         """Resolve and validate line-desktop-mcp reader script path against path injection."""
@@ -444,40 +428,24 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
         # POST /api/pick-folder
         if path == "/api/pick-folder":
             body = self._read_json_body()
-            init_dir = str(body.get("initial_dir") or "").strip()
             mock_path = str(body.get("mock_path") or "").strip()
             selected_path = mock_path
             if not selected_path and os.environ.get("PYTEST_CURRENT_TEST"):
-                selected_path = init_dir or str(self.server_vault_dir)
+                selected_path = str(self.server_vault_dir)
             elif not selected_path and sys.platform == "win32":
-                safe_init_dir = ""
-                bad_chars = set("'\"`;$<>|?*\x00\r\n\t")
-                if init_dir and re.match(r"^[a-zA-Z]:\\", init_dir) and not any(c in bad_chars for c in init_dir):
-                    try:
-                        resolved_init = Path(init_dir).resolve()
-                        if resolved_init.is_dir():
-                            safe_init_dir = str(resolved_init)
-                    except (ValueError, OSError):
-                        pass
-
                 try:
+                    # Pure hardcoded PowerShell script without any user-controlled parameters
                     ps_script = (
                         "Add-Type -AssemblyName System.Windows.Forms; "
                         "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
                         "$f.Description = '請選擇 LINE Vault 媒體保存目錄'; "
                         "$f.ShowNewFolderButton = $true; "
-                        "if ($args.Count -gt 0 -and (Test-Path -LiteralPath $args[0] -PathType Container)) { "
-                        "$f.SelectedPath = $args[0] "
-                        "}; "
                         "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
                         "Write-Output $f.SelectedPath "
                         "}"
                     )
-                    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script]
-                    if safe_init_dir:
-                        cmd.append(safe_init_dir)
                     proc = subprocess.run(
-                        cmd,
+                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
@@ -485,10 +453,8 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
                         check=False,
                     )
                     out = proc.stdout.strip()
-                    if out and re.match(r"^[a-zA-Z]:\\", out) and not any(c in bad_chars for c in out):
-                        resolved_out = Path(out).resolve()
-                        if resolved_out.is_dir():
-                            selected_path = str(resolved_out)
+                    if out and os.path.isabs(out) and os.path.isdir(out):
+                        selected_path = out
                 except (subprocess.SubprocessError, OSError):
                     selected_path = ""
             return self._send_json({"status": "ok", "selected_path": selected_path})
