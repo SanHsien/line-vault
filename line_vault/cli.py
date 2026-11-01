@@ -129,6 +129,8 @@ def launch_gui(
                 "--disable-component-extensions-with-background-pages",
                 "--disable-background-mode",
                 "--disable-sync",
+                "--disk-cache-size=0",
+                "--media-cache-size=0",
                 "--disable-features=Translate,EdgeSidebar,msEdgeSidebarV2,msHubApps,msEdgeCollections,msEdgeStartupBoost",
                 "--no-first-run",
                 "--no-default-browser-check",
