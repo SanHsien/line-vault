@@ -366,6 +366,10 @@ document.addEventListener("DOMContentLoaded", () => {
       kpiMonitoredChats.textContent = stats.monitored_chats || 0;
       kpiArchivedMedia.textContent = stats.archived_media_count || 0;
       kpiActionItems.textContent = stats.action_items_count || 0;
+      const mainVersionBadge = document.getElementById("mainAppVersionBadge");
+      if (mainVersionBadge && data.version) {
+        mainVersionBadge.textContent = `v${data.version}`;
+      }
     } catch (err) {
       console.error("fetchStatus error", err);
     }
