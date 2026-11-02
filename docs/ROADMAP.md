@@ -19,7 +19,6 @@ Windows 11 / 10 原生純 GUI 的 LINE 本地對話與防過期媒體金庫（E2
 ## 中期：等條件成立再做
 | 項目 | 觸發條件 | 驗收方式 | 建議執行者 | 證據 |
 | --- | --- | --- | --- | --- |
-| 決定 `CLAUDE.md`、`GEMINI.md` 去留（維護者慣例是 repo 只用 `AGENTS.md`） | 維護者決定採用該慣例；兩個檔各約 1 KB，只是指向 `AGENTS.md` 的入口 | 刪除兩檔；`tools/tests/test_repo_contracts.py` 的 `REQUIRED_FILES` 與 `tools/check_links.py` 的 `MAINTAINED_DOCUMENTS` 同步移除；`AGENTS.md`、`README` 等處對它們的提及改掉；`tools\dev_check.ps1` 綠。刪檔屬破壞性操作，須維護者先批准 | 維護者 | `CLAUDE.md`；`GEMINI.md`；`tools/tests/test_repo_contracts.py:14-15`；`tools/check_links.py` 的 `MAINTAINED_DOCUMENTS` |
 | Google Drive／Sheets 雲端外送鏡像（選用） | 維護者決定放寬「100% 本機、無外部上傳」的承諾 | 預設關閉、需使用者在 GUI 明確開啟；外送前有機敏欄位脫敏且有測試；`README.md`、`SECURITY.md` 的本機隱私原則同步改寫；`DECISIONS.md` 新增 ADR 寫明資料離開本機的範圍 | Claude Opus | `README.md:84`（目前承諾無雲端上傳）；`SECURITY.md` 本機隱私原則 1；`docs/ANALYSIS_EXTERNAL_WORKFLOWS.md`（借鏡來源）；原路線圖 Phase 7（`git show 99ae95f:docs/ROADMAP.md`） |
 | Gemini 視覺模型與 Function Calling 萃取收據、合約欄位（選用） | 上一列的雲端外送決定通過，且維護者決定接受把已落盤檔案送往外部模型 | 只對使用者指定的檔案隨選呼叫、金鑰只存本機設定不進 repo；送出前有脫敏與確認步驟；未設金鑰時功能不出現而不是報錯；測試涵蓋拒送與脫敏 | Claude Opus | `docs/ANALYSIS_EXTERNAL_WORKFLOWS.md`（兩階段原則：先收集分類儲存，再決定是否送 AI）；原路線圖 Phase 7 |
 | 本機 Whisper 離線語音轉文字 | 維護者要求，且打包後的 `LINE-Vault-win64.exe` 體積與啟動時間增加可接受 | 點擊語音訊息可離線產生繁中字幕；模型不進 repo、首次使用時下載並驗 SHA-256；`tools/build_release.ps1` 的產物大小在本列記下前後對照 | Claude Opus | 原路線圖「未來願景」（`git show 99ae95f:docs/ROADMAP.md`）；`tools/build_release.ps1` |

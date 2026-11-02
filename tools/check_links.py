@@ -28,8 +28,6 @@ MAINTAINED_DOCUMENTS = (
     "README.md",
     "README.en.md",
     "AGENTS.md",
-    "CLAUDE.md",
-    "GEMINI.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "REVIEW.md",

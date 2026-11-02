@@ -109,6 +109,11 @@
 
 ---
 
+
+## 2026-11-02：專案指令檔只留 `AGENTS.md`
+
+刪除 `CLAUDE.md`、`GEMINI.md`。兩檔只是指向 `AGENTS.md` 的入口，核心規範（純 GUI、直推 `main`、單一 Release、媒體不破圖、完成前跑 `dev_check` 與 `test_product`）`AGENTS.md` 都有，沒有遺失內容。Claude Code 與 Antigravity 都原生讀 `AGENTS.md`。維護者授權決定。
+
 ## 相關文件
 
 - [全域協作與代理規則 (AGENTS.md)](../AGENTS.md)

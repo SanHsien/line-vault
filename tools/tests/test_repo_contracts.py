@@ -11,8 +11,6 @@ REQUIRED_FILES = (
     "README.md",
     "README.en.md",
     "AGENTS.md",
-    "CLAUDE.md",
-    "GEMINI.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "REVIEW.md",
