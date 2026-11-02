@@ -109,10 +109,14 @@
 
 ---
 
+## ADR-009: 專案指令檔只留 `AGENTS.md`
 
-## 2026-11-02：專案指令檔只留 `AGENTS.md`
+- **狀態**：已採用 (Accepted)
+- **背景**：`CLAUDE.md`、`GEMINI.md` 只是指向 `AGENTS.md` 的入口，核心提醒（純 GUI、直推 `main`、單一 Release、媒體不破圖、完成前跑 `dev_check` 與 `test_product`）`AGENTS.md` 都有。
+- **決策**：刪除這兩個檔，`tools/check_links.py`、`tools/tests/test_repo_contracts.py` 的清單同步移除。維護者授權決定。
+- **後果**：代理的指令只有一處要維護；沒有遺失內容。
 
-刪除 `CLAUDE.md`、`GEMINI.md`。兩檔只是指向 `AGENTS.md` 的入口，核心規範（純 GUI、直推 `main`、單一 Release、媒體不破圖、完成前跑 `dev_check` 與 `test_product`）`AGENTS.md` 都有，沒有遺失內容。Claude Code 與 Antigravity 都原生讀 `AGENTS.md`。維護者授權決定。
+---
 
 ## 相關文件
 
