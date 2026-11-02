@@ -95,6 +95,20 @@
 
 ---
 
+## ADR-008: 自動更新下載端點（`/api/download-update`）只收本專案 release 資產（CodeQL `py/full-ssrf`）
+
+- **狀態**：已採用 (Accepted)
+- **背景**：CodeQL 告警 #12（`py/full-ssrf`，`server.py` 的 `urlopen`）指出請求 URL 完全取決於使用者提供的值。原寫法只用 `startswith("https://github.com/")` 或 `startswith("https://objects.githubusercontent.com/")` 判斷，之後 `urlopen` 會無條件跟隨 redirect、整份回應讀進記憶體。這代表：任何 `github.com` 路徑（包含別人的 repo 的 release）都能被抓下來存成「更新檔」；GitHub 回的 redirect 目標沒有限制；沒有大小上限；含控制字元的 URL 會丟出未被捕獲的 `http.client.InvalidURL`。內網與 loopback 位址、`file:`、非 https、DNS rebinding 在原寫法下**不可**直接達成（主機被前綴固定在 `github.com`），風險在於 redirect 與「抓到非本專案的檔案」（以上依程式碼推論，未實測利用），所以判定為真的告警而不是誤報。
+- **決策**：
+  1. `resolve_update_download_url()` 以 `urllib.parse.urlsplit` 解析，只接受 `https://github.com/SanHsien/line-vault/releases/latest/download/<asset>` 與 `.../releases/download/<tag>/<asset>`：主機必須恰為 `github.com`，不得帶使用者資訊、埠、query、fragment、空白、控制字元或反斜線；`<tag>`、`<asset>` 只允許 `[A-Za-z0-9._-]`，且 `<asset>` 副檔名限 `.exe`／`.zip`。通過後的 URL 由專案常數與兩個已驗證片段重新組出，不回傳原字串。未提供 URL 時沿用「最新 Release 的固定檔名」。不合格的 URL 回 400，不再靜默改用預設值。
+  2. `UpdateRedirectHandler` 只允許 redirect 到 `github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com` 的 https 預設埠，其餘（含 `http:`、`file:`、loopback、內網、他站）一律以 `HTTPError` 中止，最多 5 次。
+  3. `fetch_update_asset()` 會在送出請求前再驗證一次 URL，以 1 MiB 分塊讀取，超過 `MAX_UPDATE_DOWNLOAD_BYTES`（512 MiB）或 `Content-Length` 超限即中止。
+  4. 端點捕獲 `URLError`、`http.client.HTTPException`、`TimeoutError`、`OSError`、`ValueError`，以結構化 500 回應。
+- **後果**：前端不需改動（`app.js` 送的是 `/api/check-update` 回傳的 `download_exe_url`，恰為本專案 release 資產）。`tests/test_update_download_security.py` 以性質測試釘住：各種偽造主機、他人 repo、非 release 路徑、私有位址與控制字元都被拒；真實本機 302 不會被跟隨到 loopback 服務；超大回應被拒。
+- **未驗證 / 殘留**：本機沒有 CodeQL CLI，告警是否被 CodeQL 重新掃描後關閉要等推上 `main` 看（路線圖「近期」第一列）。本端點仍可被任何網頁用 CORS `*` 觸發，那是另一個缺口（路線圖「近期」第二列），不在本 ADR 範圍。
+
+---
+
 ## 相關文件
 
 - [全域協作與代理規則 (AGENTS.md)](../AGENTS.md)

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-給 Codex、Claude Code、Cursor、Antigravity 與其他自動化代理人在本專案工作時的指引。產品與圖形介面使用方式先讀 [`README.md`](README.md)（英文版見 [`README.en.md`](README.en.md)）；開發與驗收細節見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)；產品藍圖見 [`docs/ROADMAP.md`](docs/ROADMAP.md)（英文版見 [`docs/ROADMAP.en.md`](docs/ROADMAP.en.md)）。
+給 Codex、Claude Code、Cursor、Antigravity 與其他自動化代理人在本專案工作時的指引。產品與圖形介面使用方式先讀 [`README.md`](README.md)（英文版見 [`README.en.md`](README.en.md)）；開發與驗收細節見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)；路線圖（之後要做的事的單一真相源）見 [`docs/ROADMAP.md`](docs/ROADMAP.md)（英文版見 [`docs/ROADMAP.en.md`](docs/ROADMAP.en.md)）。
 
 ## 專案定位
 
@@ -37,6 +37,7 @@
 2. 保持文件與相對連結完整性，每次更新文件需通過 `tools/check_links.py`。
 3. 遵循繁體中文回覆規範，技術術語維持英文原文。
 4. 任何重大決策記錄於 [`docs/DECISIONS.md`](docs/DECISIONS.md)。安全通報見 [`SECURITY.md`](SECURITY.md)，貢獻流程見 [`CONTRIBUTING.md`](CONTRIBUTING.md)，歷史審查見 [`REVIEW.md`](REVIEW.md)。
+5. **之後要做什麼只寫在 [`docs/ROADMAP.md`](docs/ROADMAP.md)**：做完一項，在同一個 commit 刪掉那一列；新工作只加在那裡，不在 `AGENTS.md`、`README.md`、`REVIEW.md` 另列待辦。現況數字（告警、open PR、CI）只放在路線圖「現況」段並標日期；中英文鏡像 `docs/ROADMAP.en.md` 同一個 commit 改。
 
 ## 媒體歸檔與快取處理原則（2026-11-02 規範）
 
@@ -45,3 +46,7 @@
   1. **批次下載**：若需快速補齊聊天室完整原檔，應說明 LINE 桌面版內建之「聊天室選單 -> 照片．影片清單 -> 一鍵全選下載」批次功能，於幾秒內將整群媒體載入本機，再由 LINE Vault 自動接手永久歸檔。
   2. **自動打撈**：系統底層透過 `%LOCALAPPDATA%\LINE\Cache` 自動關聯比對聊天室 SHA1 目錄進行打撈，零人工點擊。
   3. **防禦性介面**：原檔尚未落地的媒體，前端一律以優雅「待快取卡片」呈現，嚴禁產生原生破圖，嚴禁觸發看圖軟體報錯。
+
+## 路線圖
+
+- `docs/ROADMAP.md` 是本 repo 後續工作的單一真相源。完成或新增工作時，在同一個 commit 更新它：做完的列刪掉、新工作加進去。不要在其他文件另列待辦。

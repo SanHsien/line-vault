@@ -1,57 +1,41 @@
-# LINE Vault Product Roadmap
+# Roadmap
 
-This document outlines the architectural milestones and product evolution history of `line-vault`. Goals and delivery statuses across each phase are detailed below:
+> The single source of truth for this repo's remaining work. When an item is done, delete its row in the same commit; new work is added only here.
+> The figures in "Current state" are a 2026-11-02 snapshot of `main` `99ae95fb1e8b`; re-check GitHub before starting. This is the English mirror of [`ROADMAP.md`](ROADMAP.md); change both in the same commit.
 
----
+## Current state
 
-## Milestone Overview
+A Windows 11 / 10 native, pure-GUI local vault for LINE chats and expiring media (E2EE media recovery, local cache archiving, FTS5 full-text search, rule-based AI to-dos and reply suggestions). Public repo, authored by the maintainer, not a fork; see the core features in `README.en.md` and the architecture decisions in [`DECISIONS.md`](DECISIONS.md). Phases 1-6 of the previous roadmap are all done and were removed from this file (history is in `git log`). Checked 2026-11-02: 0 open issues, 0 open PRs, 0 Dependabot alerts; 1 open code scanning alert (#12 `py/full-ssrf`, `line_vault/server.py:642`, scanned at `99ae95f`); the latest CI and CodeQL runs on `main` (`99ae95f`, 2026-11-01) both succeeded; the latest Release is v1.4.3 (the remote keeps only that tag); required checks on `main` are `analyze` and `test (3.12)`; the dependency freshness report is all fresh; `python -m pytest tests` passes 33 tests at `99ae95f`, and 94 with the 61 update-download security tests added by this change (local Python 3.14.10). The fix for alert #12 (the update download accepts only this project's release assets, redirects stay on GitHub download hosts, size cap) ships with the onboarding change; the decision is `docs/DECISIONS.md` ADR-008. The repo holds no record of a real-machine acceptance run against a logged-in LINE (see the table below). (`gh issue list` / `gh pr list` / `gh api repos/SanHsien/line-vault/dependabot/alerts?state=open` / `gh api repos/SanHsien/line-vault/code-scanning/alerts?state=open` / `gh run list -R SanHsien/line-vault -b main` / `gh release list -R SanHsien/line-vault`)
 
-| Milestone | Core Theme | Status | Key Deliverables |
-| :--- | :--- | :---: | :--- |
-| **Phase 1** | Core Encryption Vault & Full-Text Search | [x] Completed | E2EE media decryption, magic bytes sniffing, SQLite WAL + FTS5 millisecond search |
-| **Phase 2** | Pure GUI Workspace & Windows Desktop Experience | [x] Completed | 3-pane modern dark theme GUI, Edge/Chrome App standalone window launcher, media galleries |
-| **Phase 3** | Local AI Smart Analysis & Contextual Smart Replies | [x] Completed | Rule/AI action item extraction, vault file health inspection, one-click contextual reply copying |
-| **Phase 4** | Message Bookmarks & Action Item Check-Off | [x] Completed | Star bookmarking (⭐), dedicated bookmarks tab, action item check-off loop (✅) |
-| **Phase 5** | One-Click Chat Report Export & .txt Chat Import | [x] Completed | One-click Markdown/JSON report export, GUI import of official LINE .txt chat history |
-| **Phase 6+** | Future Visions | [ ] Planned | Local offline Whisper voice-to-text, custom LLM endpoint integration (Ollama/OpenAI) |
+## Near term: ready to start
+| Item | Why | Acceptance | Suggested executor | Evidence |
+| --- | --- | --- | --- | --- |
+| Confirm CodeQL closes alert #12 once the fix is on `main` | Only CodeQL can prove the alert is cleared; there is no CodeQL CLI locally, so this step is unverified. If it stays open, CodeQL does not accept this sanitizer shape and the user value must stay out of the URL entirely (accept only `asset_type`, build the URL from constants and the GitHub API response). The dispatcher must not dismiss it | After the push and a successful CodeQL run, `gh api repos/SanHsien/line-vault/code-scanning/alerts/12 --jq .state` returns `fixed` and `gh api "repos/SanHsien/line-vault/code-scanning/alerts?state=open" --jq length` returns `0`; if still open, paste the `gh api .../alerts/12` data flow here and hand it to the maintainer | Claude Sonnet | `resolve_update_download_url` / `UpdateRedirectHandler` / `fetch_update_asset` in `line_vault/server.py`; `tests/test_update_download_security.py`; `gh api repos/SanHsien/line-vault/code-scanning/alerts/12` |
+| Add Origin / Host checks to the local REST API and drop `Access-Control-Allow-Origin: *` | Every response sends `Access-Control-Allow-Origin: *`, `do_POST` ignores Content-Type (`_read_json_body` calls `json.loads` directly), and nothing validates Origin or Host. By reading the code, any web page the user visits can read chat data from `127.0.0.1:8765` and call `POST /api/shutdown` and `DELETE /api/chats/<id>`; DNS rebinding is the same (exploitation not tested). The same gap lets a web page trigger the download endpoint behind alert #12 | New tests: a request with `Origin: https://evil.example` gets no `Access-Control-Allow-Origin` and write/delete endpoints return 403; a `Host` that is not `127.0.0.1:<port>` or `localhost:<port>` returns 403; the GUI's own same-origin requests are unaffected (`tests/test_line_vault.py` stays green, `app.js` fetch calls unchanged); add one line to the local protections in `SECURITY.md` | Claude Sonnet | `line_vault/server.py:309-312` (`_send_cors_headers`); `line_vault/server.py:558` (`do_POST`); `line_vault/server.py:737` (`/api/shutdown`); `line_vault/server.py:542` (`do_DELETE`); `rg -n "Origin|\"Host\"" line_vault` finds no validation code |
+| Keep the version number in one place and stop hard-coding "v1.0.0" in docs | `pyproject.toml` says `1.0.0`, while `line_vault/__init__.py` and the real Release say `1.4.3`; the README badge, the `tools/build_release.ps1` default and the `app.js` fallback string are still 1.0.0; several docs say "single latest Release/Tag (`v1.0.0`)" while the latest is v1.4.3, so readers assume they are getting an old build | `pyproject.toml` takes its version from `line_vault.__version__` (`dynamic`) or a new contract test asserts they are equal; the `build_release.ps1` default is no longer hard-coded or comes from the same source; docs say "single latest Release/Tag" without a number; the version assertion in `tests/test_line_vault.py` compares against `__version__`; `tools\dev_check.ps1` and `tools\test_product.ps1` are green; confirm nobody else is writing in `C:\GitHub\line-vault` first | Claude Sonnet | `pyproject.toml:7`; `line_vault/__init__.py:16`; `tools/build_release.ps1:3`; `README.md:7,91`; `AGENTS.md:13`; `CONTRIBUTING.md:10`; `GEMINI.md:11`; `docs/DEVELOPMENT.md:90`; `tests/test_line_vault.py:1393`; `line_vault/static/app.js:1277` |
+| Narrow the 5 `except Exception` handlers in `server.py` | `AGENTS.md` requires exception handling to "catch explicit types and log or return structured state"; the contract test only blocks `except Exception: pass`. These 5 sites do return an error, but they flatten every unexpected failure (including programming defects) into one response, and the AGENTS rule is not machine-enforced | `rg -n "except Exception" line_vault` has no hits, or each site catches explicit types with a test pinning that endpoint's response; add a contract test that blocks `except Exception` (list any legitimate exceptions first); `pytest tests` green | Claude Sonnet | `line_vault/server.py:439,634,685,699,713`; `AGENTS.md:19`; `tools/tests/test_repo_contracts.py:30` (`FORBIDDEN_PATTERNS`) |
+| Add a dated Windows real-machine acceptance record | All tests so far use synthetic caches and simulated data; the closing report says "not yet run a full real-machine import against a logged-in `LINE.exe`", later versions fixed several real-machine problems, but the repo holds no acceptance record | A dated record under `docs/`: Windows build, LINE desktop version, Edge / Chrome version, resolution and DPI, per-item checklist results (cache scan, MCP sync, media recovery, pending-cache card, update check and download) and screenshots of problems; no real chat content; open an issue per defect found | 維護者 | `mission-reports/2026-10-31-line-vault.md:61`; `docs/` currently holds only DECISIONS, DEVELOPMENT, ROADMAP and a sample export, no acceptance record |
 
----
+## Mid term: when a condition holds
+| Item | Trigger | Acceptance | Suggested executor | Evidence |
+| --- | --- | --- | --- | --- |
+| Decide the fate of `CLAUDE.md` and `GEMINI.md` (the maintainer convention is that a repo uses only `AGENTS.md`) | The maintainer adopts that convention; each file is about 1 KB and only points at `AGENTS.md` | Delete both; remove them from `REQUIRED_FILES` in `tools/tests/test_repo_contracts.py` and `MAINTAINED_DOCUMENTS` in `tools/check_links.py`; fix mentions in `AGENTS.md`, `README` and elsewhere; `tools\dev_check.ps1` green. Deletion is destructive and needs the maintainer's approval first | 維護者 | `CLAUDE.md`; `GEMINI.md`; `tools/tests/test_repo_contracts.py:14-15`; `MAINTAINED_DOCUMENTS` in `tools/check_links.py` |
+| Google Drive / Sheets cloud mirror (opt-in) | The maintainer relaxes the "100% local, no external upload" promise | Off by default, enabled explicitly in the GUI; sensitive fields are redacted before upload, with tests; the local-privacy text in `README.md` and `SECURITY.md` is rewritten; a new ADR in `DECISIONS.md` states what data leaves the machine | Claude Opus | `README.md:84` (the current no-cloud promise); principle 1 of the local privacy section in `SECURITY.md`; `docs/ANALYSIS_EXTERNAL_WORKFLOWS.md` (source of the idea); Phase 7 of the old roadmap (`git show 99ae95f:docs/ROADMAP.md`) |
+| Gemini vision and Function Calling to extract receipt and contract fields (opt-in) | The cloud mirror decision above passes, and the maintainer accepts sending already-saved files to an external model | On-demand only, for files the user picks; the key lives in local settings, never in the repo; redaction and a confirmation step before sending; with no key the feature is hidden rather than erroring; tests cover refusal and redaction | Claude Opus | `docs/ANALYSIS_EXTERNAL_WORKFLOWS.md` (two-stage principle: collect, classify and store first, then decide whether to send to AI); Phase 7 of the old roadmap |
+| Offline local Whisper speech-to-text | The maintainer asks for it, and the size and start-up cost added to the packaged `LINE-Vault-win64.exe` are acceptable | Clicking a voice message produces zh-TW subtitles offline; the model is not in the repo, downloaded on first use with a SHA-256 check; record the `tools/build_release.ps1` output size before and after in this row | Claude Opus | "Future visions" of the old roadmap (`git show 99ae95f:docs/ROADMAP.md`); `tools/build_release.ps1` |
+| Custom LLM endpoint (Ollama, OpenAI-compatible) | The maintainer wants deeper multi-turn insight and accepts that an OpenAI-compatible endpoint may be cloud-hosted | Endpoint and key are set in the GUI; the default stays the existing rule-based analysis; choosing a non-`127.0.0.1` endpoint shows a clear data-egress notice; tests cover unset, connection failure and malformed responses | Claude Sonnet | "Future visions" of the old roadmap; `line_vault/analyzer.py` (the current rule-based analysis) |
+| Patrol and archive through Windows Task Scheduler even when LINE Vault is not running | Media actually expires unarchived because the app was closed; pass the Windows three-question check first (does the detector live and die with what it watches, does an existing mechanism already provide it) | The Task Scheduler entry is created and removed with one GUI click; with the GUI closed, incremental archiving succeeds; no leftovers after removal; the existing `VaultAutoUpdater` only patrols while the process runs, so the new mechanism must not sync the same files twice | Claude Opus | `line_vault/server.py:183` (`VaultAutoUpdater`); the scheduled-backup item in "Future visions" of the old roadmap |
+| Layer media sub-folders by year-month or file type | One chat's media folder grows too large to browse, or the maintainer asks | The layout is a setting, default unchanged; already archived files are not moved, or a re-runnable migration exists; hash de-duplication is unaffected | Claude Sonnet | `docs/ANALYSIS_EXTERNAL_WORKFLOWS.md:52`; `line_vault/archiver.py` (per-chat sub-folder creation) |
 
-## Detailed Milestone Descriptions
+## Deliberately not doing
+| Not doing | Reason | When to reconsider |
+| --- | --- | --- |
+| Command-line sub-commands (`stats`, `search`, `scan`, ...) | The user explicitly asked for a pure GUI; every feature must work in the graphical interface (`docs/DECISIONS.md` ADR-005, `AGENTS.md:12`) | The maintainer changes the product positioning |
+| Unofficial LINE password or QR fake-client login, or force-pulling expired media from LINE's cloud | Easily triggers account bans and logs the phone out; the project scans the local cache and restores E2EE instead (`mission-reports/2026-10-31-line-vault.md:58`) | LINE offers an official export or read interface for personal accounts |
+| Sending LINE messages automatically without user confirmation | The project is read-only plus suggestions; reply drafts are always copied by the user (`mission-reports/2026-10-31-line-vault.md:15`) | The maintainer asks for it and designs a per-send confirmation flow |
+| Asking users to open each chat's media by hand to fill the cache, or letting the front end show broken images | Impractical across dozens of chats and thousands of files; use LINE's built-in batch download plus automatic cache pickup, and show a pending-cache card for anything not yet on disk (`AGENTS.md:41-47`) | LINE removes batch download or the cache layout changes so it cannot be matched |
+| Adopting FastAPI, Flask, Electron or other external web / desktop frameworks | Zero dependencies and double-click start are product selling points and keep the attack surface small (`docs/DECISIONS.md` ADR-001) | The standard-library `http.server` cannot meet a requirement, with a concrete measurement |
+| Keeping multiple old Releases / Tags | The maintainer's single-latest Release/Tag policy (`AGENTS.md:13`); the remote currently has only v1.4.3 | The maintainer changes the release policy |
 
-### Phase 1: Core Encryption Vault & FTS5 Indexing — `[x] Completed`
-- [x] LINE E2EE (Letter Sealing) AES-256-CBC media decryption engine and SHA-256 integrity verification.
-- [x] Media file format sniffing via magic bytes (JPEG, PNG, GIF, MP4, PDF, ZIP, etc.).
-- [x] SQLite WAL high-concurrency architecture with FTS5 inverted full-text index.
-- [x] Local cache fingerprint matching and automatic vault archiving mechanism.
-
-### Phase 2: Pure GUI Workspace & Windows Desktop Integration — `[x] Completed`
-- [x] Zero-build-dependency 3-pane dark theme workspace (Chat list, message/media viewer, AI insight pane).
-- [x] Windows 11 native standalone window launch (`start_line_vault.bat` double-click console-less launcher, Edge/Chrome `--app` mode).
-- [x] Media photo wall, video gallery, and document vault with direct local file download.
-- [x] Date range filtering and full-text real-time search term highlighting.
-
-### Phase 3: AI Smart Analysis & Contextual Replies — `[x] Completed`
-- [x] Rule-based and smart AI analysis extracting milestones, quotes/invoices, questions, and assigned tasks.
-- [x] Attachment health status tracking (vault-archived, thumbnail-cached, pending download).
-- [x] Contextual suggested replies across 3 tones (business professional, proactive, rigorous) with one-click clipboard copying.
-- [x] Bilingual AI analysis generation (Traditional Chinese `zh-TW` and English `en`).
-
-### Phase 4: Message Bookmarking & Action Item Check-Off — `[x] Completed`
-- [x] Message-level star bookmarking (⭐ click to toggle, persisted to database).
-- [x] Dedicated Bookmarks navigation tab for quick access to key messages across chats.
-- [x] Action item check-off loop (✅ checkbox), automatically striking through completed items and deducting from dashboard pending stats.
-
-### Phase 5: One-Click Report Export & .txt Chat History Import — `[x] Completed`
-- [x] One-click chat and AI analysis report export (structured Markdown and full JSON format).
-- [x] GUI upload and parsing of official LINE desktop/mobile exported `.txt` chat histories.
-- [x] Automatic chat creation and immediate AI insight generation upon import.
-- [x] Seamless bilingual GUI switcher (Traditional Chinese / English with one click).
-
----
-
-## Future Visions
-
-- [ ] **Offline Voice-to-Text**: Integrate local lightweight Whisper models for transcribing voice messages offline.
-- [ ] **Custom External LLM Integration**: Connect to custom Ollama or OpenAI-compatible endpoints for multi-turn deep dialogue insights.
-- [ ] **Scheduled Automated Archiving**: Windows Task Scheduler integration for background incremental vault synchronization.
+## Maintenance
+Maintainer-owned repo, working directly on `main` with no branches or PRs. Dependencies are tracked by Dependabot (pip and github-actions, weekly) and the Monday `Dependency freshness` workflow; before merging, `pwsh -NoProfile -File tools\dev_check.ps1` (compileall, ruff, contract tests, doc links) and `pwsh -NoProfile -File tools\test_product.ps1` (product tests) must be green; CI runs Python 3.10-3.14 on Windows. Bilingual documents (`README`, this file) change in the same commit. When fixing a problem listed in `REVIEW.md`, annotate the fix commit and date. To check state: `gh issue list -R SanHsien/line-vault`, `gh api "repos/SanHsien/line-vault/code-scanning/alerts?state=open"`, `gh run list -R SanHsien/line-vault -b main -L 8`.

@@ -1,5 +1,6 @@
 """Zero-dependency HTTP server and REST API for LINE Vault built with ThreadingHTTPServer."""
 
+import http.client
 import json
 import os
 import platform
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -27,6 +29,145 @@ from line_vault import (
 from line_vault.analyzer import ChatAnalyzer
 from line_vault.archiver import MediaArchiver
 from line_vault.db import VaultDB
+
+# ---------------------------------------------------------------------------
+# Self-update download guard (CodeQL py/full-ssrf)
+#
+# `POST /api/download-update` makes this process fetch a URL that the client chose, so the URL
+# is validated against a fixed shape instead of a string prefix: https, host exactly github.com,
+# and a release asset of this project (GITHUB_REPO). Redirects are only followed to GitHub's own
+# download hosts over https, and the body is size-bounded.
+# ---------------------------------------------------------------------------
+UPDATE_DOWNLOAD_HOST = "github.com"
+UPDATE_REDIRECT_HOSTS = frozenset({
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+})
+MAX_UPDATE_DOWNLOAD_BYTES = 512 * 1024 * 1024
+_UPDATE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_UPDATE_ASSET_SUFFIXES = (".exe", ".zip")
+
+
+def _has_unsafe_url_chars(value: str) -> bool:
+    """Whitespace, control characters and backslashes are never part of a URL we accept."""
+    return any(ord(ch) <= 0x20 or ord(ch) == 0x7F or ch == "\\" for ch in value)
+
+
+def resolve_update_download_url(user_url: str | None, asset_name: str) -> str | None:
+    """Return a safe release-asset URL for ``user_url``, or ``None`` if it is not one.
+
+    An empty ``user_url`` selects the latest release asset ``asset_name``. A non-empty value must
+    be ``https://github.com/<GITHUB_REPO>/releases/latest/download/<asset>`` or
+    ``https://github.com/<GITHUB_REPO>/releases/download/<tag>/<asset>`` with no userinfo, port,
+    query, fragment, whitespace or backslash. The returned URL is rebuilt from the project
+    constants plus the two validated path segments, never echoed from the input.
+    """
+    repo_prefix = f"https://{UPDATE_DOWNLOAD_HOST}/{GITHUB_REPO}/releases"
+    if not user_url:
+        return f"{repo_prefix}/latest/download/{asset_name}"
+    if not isinstance(user_url, str) or _has_unsafe_url_chars(user_url):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(user_url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme != "https" or parts.netloc != UPDATE_DOWNLOAD_HOST or port is not None:
+        return None
+    if parts.query or parts.fragment:
+        return None
+    segments = parts.path.split("/")
+    expected_head = ["", *GITHUB_REPO.split("/"), "releases"]
+    if segments[: len(expected_head)] != expected_head:
+        return None
+    tail = segments[len(expected_head):]
+    if len(tail) != 3:
+        return None
+    if tail[0] == "latest" and tail[1] == "download":
+        tag: str | None = None
+    elif tail[0] == "download":
+        tag = tail[1]
+    else:
+        return None
+    asset = tail[2]
+    if tag is not None and not _UPDATE_SEGMENT_RE.match(tag):
+        return None
+    if not _UPDATE_SEGMENT_RE.match(asset) or not asset.lower().endswith(_UPDATE_ASSET_SUFFIXES):
+        return None
+    if tag is None:
+        return f"{repo_prefix}/latest/download/{asset}"
+    return f"{repo_prefix}/download/{tag}/{asset}"
+
+
+def _is_allowed_update_redirect(target: str) -> bool:
+    """True only for https URLs on GitHub's download hosts (no userinfo, default port)."""
+    if _has_unsafe_url_chars(target):
+        return False
+    try:
+        parts = urllib.parse.urlsplit(target)
+        port = parts.port
+    except ValueError:
+        return False
+    return parts.scheme == "https" and parts.netloc in UPDATE_REDIRECT_HOSTS and port is None
+
+
+class UpdateRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to GitHub download hosts over https; refuse everything else."""
+
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _is_allowed_update_redirect(newurl):
+            raise urllib.error.HTTPError(
+                req.full_url, code, "redirect to a non-GitHub target blocked", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def build_update_opener() -> urllib.request.OpenerDirector:
+    """URL opener whose redirect handling is restricted by :class:`UpdateRedirectHandler`."""
+    return urllib.request.build_opener(UpdateRedirectHandler())
+
+
+def fetch_update_asset(
+    url: str,
+    *,
+    opener: urllib.request.OpenerDirector | None = None,
+    max_bytes: int = MAX_UPDATE_DOWNLOAD_BYTES,
+    timeout: float = 60,
+) -> bytes:
+    """Download a release asset, re-validating ``url`` and bounding the body to ``max_bytes``.
+
+    Raises ``ValueError`` for a URL that is not one of this project's release assets or a body
+    larger than ``max_bytes``; network failures propagate as ``URLError``/``OSError``.
+    """
+    safe_url = resolve_update_download_url(url, "") if url else None
+    if safe_url is None or not url:
+        raise ValueError("update URL is not a release asset of this project")
+    req = urllib.request.Request(
+        safe_url,
+        headers={
+            "User-Agent": f"LINE-Vault/{APP_VERSION}",
+            "Accept": "application/octet-stream, */*",
+        },
+    )
+    active_opener = opener if opener is not None else build_update_opener()
+    with active_opener.open(req, timeout=timeout) as resp:
+        declared = resp.headers.get("Content-Length") if resp.headers is not None else None
+        if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+            raise ValueError("update asset exceeds the size limit")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = resp.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("update asset exceeds the size limit")
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _parse_semver(ver_str: str) -> tuple[int, int, int]:
@@ -627,34 +768,27 @@ class VaultRequestHandler(BaseHTTPRequestHandler):
             asset_type = str(body.get("asset_type") or "exe").strip().lower()
             asset_name = "LINE-Vault-win64.zip" if asset_type == "zip" else "LINE-Vault-win64.exe"
             user_url = str(body.get("download_url") or "").strip()
-            if user_url and (user_url.startswith("https://github.com/") or user_url.startswith("https://objects.githubusercontent.com/")):
-                dl_url = user_url
-                if dl_url.lower().endswith(".zip"):
-                    asset_name = "LINE-Vault-win64.zip"
-            else:
-                dl_url = f"{GITHUB_REPO_URL}/releases/latest/download/{asset_name}"
+            dl_url = resolve_update_download_url(user_url, asset_name)
+            if dl_url is None:
+                return self._send_error(
+                    "download_url must be a release asset of this project on github.com", status=400
+                )
+            if dl_url.lower().endswith(".zip"):
+                asset_name = "LINE-Vault-win64.zip"
 
             downloads_dir = Path.home() / "Downloads"
             if not downloads_dir.exists():
                 downloads_dir = self.server_vault_dir
             dest_path = downloads_dir / f"LINE-Vault-latest-{asset_name}"
             try:
-                req = urllib.request.Request(
-                    dl_url,
-                    headers={
-                        "User-Agent": f"LINE-Vault/{APP_VERSION}",
-                        "Accept": "application/octet-stream, */*",
-                    },
-                )
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data_bytes = resp.read()
+                data_bytes = fetch_update_asset(dl_url)
                 dest_path.write_bytes(data_bytes)
                 return self._send_json({
                     "success": True,
                     "saved_path": str(dest_path),
                     "size_bytes": len(data_bytes),
                 })
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError) as exc:
                 return self._send_error(f"下載更新檔案失敗 ({exc})", status=500)
 
         # POST /api/scan-line

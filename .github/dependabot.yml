@@ -1,3 +1,4 @@
+# fleet-waiver: multi-commit -- 本 repo 建立於 2026-10-31，晚於 2026-10-24 的全艦隊一次性清理，沒有舊歷史要清；之後的提交是正常工作，不該逼它重寫
 version: 2
 updates:
   - package-ecosystem: "pip"
